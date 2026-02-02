@@ -395,7 +395,6 @@ func (p *Processor) processTextWithStreaming(ctx context.Context, text string) {
 	// 创建文本通道用于LLM到TTS的流式传输
 	textChan := make(chan string, 100)
 	var llmResponse strings.Builder
-	var ttsWaitGroup sync.WaitGroup
 	var firstResponseSent bool
 	var ttsEndSent bool
 
@@ -459,8 +458,8 @@ func (p *Processor) processTextWithStreaming(ctx context.Context, text string) {
 			return nil
 		}
 
-		// 启动流式TTS合成
-		err := p.ttsService.SynthesizeStream(ttsCtx, textChan, callback, &ttsWaitGroup)
+		// 启动流式TTS合成（不再需要waitGroup）
+		err := p.ttsService.SynthesizeStream(ttsCtx, textChan, callback)
 		if err != nil {
 			p.logger.Error("流式TTS合成失败", zap.Error(err))
 		}
@@ -540,9 +539,6 @@ func (p *Processor) processTextWithStreaming(ctx context.Context, text string) {
 		return
 	}
 
-	// 等待TTS合成完成
-	p.logger.Info("等待流式TTS合成完成")
-	ttsWaitGroup.Wait()
 	p.logger.Info("流式处理完成")
 }
 

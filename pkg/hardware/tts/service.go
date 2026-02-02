@@ -97,7 +97,7 @@ func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
 type StreamingTTSCallback func(audioData []byte, isFirst bool, isLast bool, segmentIndex int) error
 
 // SynthesizeStream 流式合成语音（接收LLM流式输出）
-func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, callback StreamingTTSCallback, waitGroup *sync.WaitGroup) error {
+func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, callback StreamingTTSCallback) error {
 	s.mu.RLock()
 	closed := s.closed
 	synthesizer := s.synthesizer
@@ -114,6 +114,7 @@ func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, 
 	var textBuffer strings.Builder
 	var segmentIndex int
 	var firstSegmentSent bool
+	var isFirstAudioSent bool
 
 	for {
 		select {
@@ -133,31 +134,25 @@ func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, 
 				)
 
 				if remaining != "" {
-					// 尝试分割剩余文本
-					if firstSegmentSent {
-						// 已经发送过第一段，尝试提取完整句子
-						if segment := s.tryExtractCompleteSentence(remaining); segment != "" {
-							s.logger.Info("从剩余文本提取句子", zap.String("segment", segment))
-							go s.synthesizeTextSegmentAsync(ctx, segment, segmentIndex, false, false, callback, waitGroup)
-							segmentIndex++
-
-							// 更新剩余文本
-							remaining = strings.TrimSpace(remaining[len(segment):])
+					// 处理最后的剩余文本
+					remainingRunes := []rune(strings.TrimSpace(remaining))
+					if len(remainingRunes) >= 2 { // 至少2个字符才值得合成
+						s.logger.Info("处理最后剩余文本", zap.String("text", remaining))
+						s.synthesizeTextSegmentSync(ctx, remaining, segmentIndex, true, !firstSegmentSent, callback, &isFirstAudioSent)
+					} else {
+						s.logger.Info("剩余文本太短，忽略", zap.String("remaining", remaining))
+						// 如果没有剩余文本需要合成，直接发送结束信号
+						if isFirstAudioSent {
+							callback([]byte{}, false, true, segmentIndex)
 						}
 					}
-
-					// 处理最后的剩余文本
-					if remaining != "" {
-						// 检查剩余文本是否有意义（不只是标点符号）
-						remainingRunes := []rune(strings.TrimSpace(remaining))
-						if len(remainingRunes) >= 2 { // 至少2个字符才值得合成
-							s.logger.Info("处理最后剩余文本", zap.String("text", remaining))
-							go s.synthesizeTextSegmentAsync(ctx, remaining, segmentIndex, true, !firstSegmentSent, callback, waitGroup)
-						} else {
-							s.logger.Info("剩余文本太短，忽略", zap.String("remaining", remaining))
-						}
+				} else {
+					// 没有剩余文本，发送结束信号
+					if isFirstAudioSent {
+						callback([]byte{}, false, true, segmentIndex)
 					}
 				}
+
 				s.logger.Info("流式TTS合成完成")
 				return nil
 			}
@@ -184,8 +179,8 @@ func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, 
 						zap.Int("segmentLen", len([]rune(segment))),
 					)
 
-					// 立即合成第一段（异步）
-					go s.synthesizeTextSegmentAsync(ctx, segment, segmentIndex, false, true, callback, waitGroup)
+					// 立即合成第一段（同步）
+					s.synthesizeTextSegmentSync(ctx, segment, segmentIndex, false, true, callback, &isFirstAudioSent)
 
 					// 从缓冲区移除已处理的文本
 					remaining := strings.TrimSpace(currentText[len(segment):])
@@ -206,8 +201,8 @@ func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, 
 						zap.Int("segmentLen", len([]rune(segment))),
 					)
 
-					// 合成句子（异步）
-					go s.synthesizeTextSegmentAsync(ctx, segment, segmentIndex, false, false, callback, waitGroup)
+					// 合成句子（同步）
+					s.synthesizeTextSegmentSync(ctx, segment, segmentIndex, false, false, callback, &isFirstAudioSent)
 
 					// 从缓冲区移除已处理的文本
 					remaining := strings.TrimSpace(currentBuffer[len(segment):])
@@ -219,6 +214,108 @@ func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, 
 			}
 		}
 	}
+}
+
+// synthesizeTextSegmentSync 同步合成文本片段（用于流式TTS）
+func (s *Service) synthesizeTextSegmentSync(ctx context.Context, text string, segmentIndex int, isLast bool, isFirst bool, callback StreamingTTSCallback, isFirstAudioSent *bool) {
+	if text == "" {
+		return
+	}
+
+	s.logger.Info("开始同步合成文本片段",
+		zap.String("text", text),
+		zap.Int("segmentIndex", segmentIndex),
+		zap.Bool("isFirst", isFirst),
+		zap.Bool("isLast", isLast),
+	)
+
+	// 创建片段处理器
+	handler := &streamingSyncSegmentHandler{
+		callback:         callback,
+		ctx:              ctx,
+		logger:           s.logger,
+		text:             text,
+		segmentIndex:     segmentIndex,
+		isFirst:          isFirst,
+		isLast:           isLast,
+		isFirstAudioSent: isFirstAudioSent,
+	}
+
+	// 合成当前片段
+	err := s.synthesizer.Synthesize(ctx, handler, text)
+	if err != nil {
+		classified := s.errorHandler.Classify(err, "TTS")
+		s.logger.Error("同步TTS片段合成失败",
+			zap.Error(classified),
+			zap.Int("segmentIndex", segmentIndex),
+			zap.String("text", text),
+		)
+		return
+	}
+
+	s.logger.Info("同步文本片段合成完成",
+		zap.Int("segmentIndex", segmentIndex),
+		zap.String("text", text),
+	)
+}
+
+// streamingSyncSegmentHandler 流式同步片段处理器
+type streamingSyncSegmentHandler struct {
+	callback         StreamingTTSCallback
+	ctx              context.Context
+	logger           *zap.Logger
+	text             string
+	segmentIndex     int
+	isFirst          bool
+	isLast           bool
+	isFirstAudioSent *bool
+	chunkCount       int
+	totalBytes       int
+}
+
+func (h *streamingSyncSegmentHandler) OnMessage(data []byte) {
+	h.chunkCount++
+	if len(data) > 0 {
+		h.totalBytes += len(data)
+
+		// 每10个chunk记录一次进度
+		if h.chunkCount%10 == 1 {
+			h.logger.Debug("流式TTS音频数据接收中",
+				zap.Int("segmentIndex", h.segmentIndex),
+				zap.Int("chunkCount", h.chunkCount),
+				zap.Int("chunkSize", len(data)),
+				zap.Int("totalBytes", h.totalBytes),
+				zap.Bool("isFirst", h.isFirst),
+			)
+		}
+	}
+
+	select {
+	case <-h.ctx.Done():
+		// Context已取消，不再发送数据
+		return
+	default:
+		// 调用回调函数发送音频数据
+		// isFirst: 第一个片段的第一个chunk
+		// isLast: 最后一个片段且数据为空（TTS结束信号）
+		isFirstChunk := h.isFirst && h.chunkCount == 1 && !*h.isFirstAudioSent
+		if isFirstChunk {
+			*h.isFirstAudioSent = true
+		}
+		isLastChunk := h.isLast && len(data) == 0
+
+		if err := h.callback(data, isFirstChunk, isLastChunk, h.segmentIndex); err != nil {
+			h.logger.Warn("流式TTS回调失败",
+				zap.Error(err),
+				zap.Int("segmentIndex", h.segmentIndex),
+				zap.Int("chunkSize", len(data)),
+			)
+		}
+	}
+}
+
+func (h *streamingSyncSegmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
+	// 暂时不处理时间戳
 }
 
 // tryExtractFirstSegmentAggressive 更激进的第一段提取策略（立即响应）
@@ -329,102 +426,6 @@ func (s *Service) tryExtractCompleteSentence(text string) string {
 	}
 
 	return "" // 文本太短，等待更多内容
-}
-
-// synthesizeTextSegmentAsync 异步合成文本片段
-func (s *Service) synthesizeTextSegmentAsync(ctx context.Context, text string, segmentIndex int, isLast bool, isFirst bool, callback StreamingTTSCallback, waitGroup *sync.WaitGroup) {
-	if text == "" {
-		return
-	}
-
-	// 增加等待组计数
-	waitGroup.Add(1)
-	defer waitGroup.Done()
-
-	s.logger.Info("开始异步合成文本片段",
-		zap.String("text", text),
-		zap.Int("segmentIndex", segmentIndex),
-		zap.Bool("isFirst", isFirst),
-		zap.Bool("isLast", isLast),
-	)
-
-	// 创建片段处理器
-	handler := &streamingSegmentHandler{
-		callback:     callback,
-		ctx:          ctx,
-		logger:       s.logger,
-		text:         text,
-		segmentIndex: segmentIndex,
-		isFirst:      isFirst,
-		isLast:       isLast,
-	}
-
-	// 合成当前片段
-	err := s.synthesizer.Synthesize(ctx, handler, text)
-	if err != nil {
-		classified := s.errorHandler.Classify(err, "TTS")
-		s.logger.Error("异步TTS片段合成失败",
-			zap.Error(classified),
-			zap.Int("segmentIndex", segmentIndex),
-			zap.String("text", text),
-		)
-		return
-	}
-
-	s.logger.Info("异步文本片段合成完成",
-		zap.Int("segmentIndex", segmentIndex),
-		zap.String("text", text),
-	)
-}
-
-// streamingSegmentHandler 流式片段处理器
-type streamingSegmentHandler struct {
-	callback     StreamingTTSCallback
-	ctx          context.Context
-	logger       *zap.Logger
-	text         string
-	segmentIndex int
-	isFirst      bool
-	isLast       bool
-	chunkCount   int
-	totalBytes   int
-}
-
-func (h *streamingSegmentHandler) OnMessage(data []byte) {
-	if len(data) > 0 {
-		h.chunkCount++
-		h.totalBytes += len(data)
-
-		// 每10个chunk记录一次进度
-		if h.chunkCount%10 == 1 {
-			h.logger.Debug("流式TTS音频数据接收中",
-				zap.Int("segmentIndex", h.segmentIndex),
-				zap.Int("chunkCount", h.chunkCount),
-				zap.Int("chunkSize", len(data)),
-				zap.Int("totalBytes", h.totalBytes),
-				zap.Bool("isFirst", h.isFirst),
-			)
-		}
-	}
-
-	select {
-	case <-h.ctx.Done():
-		// Context已取消，不再发送数据
-		return
-	default:
-		// 调用回调函数发送音频数据
-		if err := h.callback(data, h.isFirst && h.chunkCount == 1, h.isLast && len(data) == 0, h.segmentIndex); err != nil {
-			h.logger.Warn("流式TTS回调失败",
-				zap.Error(err),
-				zap.Int("segmentIndex", h.segmentIndex),
-				zap.Int("chunkSize", len(data)),
-			)
-		}
-	}
-}
-
-func (h *streamingSegmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
-	// 暂时不处理时间戳
 }
 
 // Synthesize 合成语音
