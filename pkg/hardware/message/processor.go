@@ -990,9 +990,10 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 
 	// 重新配置TTS文本分割（重要：切换发音人后需要重新配置）
 	config := tts.TextSplitConfig{
-		Enable:         true, // 启用文本分割
-		SplitRatio:     0.5,  // 一半一半分割
-		MinSplitLength: 15,   // 最小15个字符才分割（适合中文）
+		Enable:             true, // 启用文本分割
+		FirstSegmentMinLen: 3,    // 第一段最小3个字符
+		FirstSegmentMaxLen: 5,    // 第一段最大5个字符（5字策略）
+		MinSplitLength:     6,    // 最小6个字符才分割（降低门槛）
 	}
 	p.ttsService.SetTextSplitConfig(config)
 
@@ -1008,7 +1009,8 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 	p.logger.Info("发音人切换完成，已重新配置TTS文本分割",
 		zap.String("speakerID", speakerID),
 		zap.Bool("textSplitEnabled", config.Enable),
-		zap.Float64("splitRatio", config.SplitRatio),
+		zap.Int("firstSegmentMinLen", config.FirstSegmentMinLen),
+		zap.Int("firstSegmentMaxLen", config.FirstSegmentMaxLen),
 		zap.Int("minSplitLength", config.MinSplitLength),
 	)
 
@@ -1214,16 +1216,18 @@ func (p *Processor) configureTTSTextSplit() {
 
 	// 默认启用文本分割配置
 	config := tts.TextSplitConfig{
-		Enable:         true, // 启用文本分割
-		SplitRatio:     0.5,  // 一半一半分割
-		MinSplitLength: 15,   // 最小15个字符才分割（适合中文）
+		Enable:             true, // 启用文本分割
+		FirstSegmentMinLen: 3,    // 第一段最小3个字符
+		FirstSegmentMaxLen: 5,    // 第一段最大5个字符（5字策略）
+		MinSplitLength:     6,    // 最小6个字符才分割（降低门槛）
 	}
 
 	p.ttsService.SetTextSplitConfig(config)
 
 	p.logger.Info("TTS文本分割配置已设置",
 		zap.Bool("enable", config.Enable),
-		zap.Float64("splitRatio", config.SplitRatio),
+		zap.Int("firstSegmentMinLen", config.FirstSegmentMinLen),
+		zap.Int("firstSegmentMaxLen", config.FirstSegmentMaxLen),
 		zap.Int("minSplitLength", config.MinSplitLength),
 	)
 }

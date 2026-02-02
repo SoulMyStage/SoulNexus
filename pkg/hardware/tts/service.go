@@ -24,16 +24,18 @@ type Service struct {
 	closed       bool
 
 	// 文本分割配置
-	enableTextSplit bool    // 是否启用文本分割
-	splitRatio      float64 // 分割比例 (0.0-1.0)
-	minSplitLength  int     // 最小分割长度
+	enableTextSplit    bool // 是否启用文本分割
+	firstSegmentMinLen int  // 第一段最小长度
+	firstSegmentMaxLen int  // 第一段最大长度
+	minSplitLength     int  // 最小分割长度
 }
 
 // TextSplitConfig 文本分割配置
 type TextSplitConfig struct {
-	Enable         bool    `json:"enable"`           // 是否启用文本分割
-	SplitRatio     float64 `json:"split_ratio"`      // 分割比例，默认0.5（一半一半）
-	MinSplitLength int     `json:"min_split_length"` // 最小分割长度，默认10个字符
+	Enable             bool `json:"enable"`                // 是否启用文本分割
+	FirstSegmentMinLen int  `json:"first_segment_min_len"` // 第一段最小长度，默认3个字符
+	FirstSegmentMaxLen int  `json:"first_segment_max_len"` // 第一段最大长度，默认8个字符（约5个中文字）
+	MinSplitLength     int  `json:"min_split_length"`      // 总体最小分割长度，默认8个字符
 }
 
 // TextSegment 文本片段
@@ -54,15 +56,16 @@ func NewService(
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
-		ctx:             ctx,
-		credential:      credential,
-		speaker:         speaker,
-		synthesizer:     synthesizer,
-		errorHandler:    errorHandler,
-		logger:          logger,
-		enableTextSplit: true, // 默认启用文本分割
-		splitRatio:      0.5,  // 默认一半一半分割
-		minSplitLength:  15,   // 最小15个字符才分割（与configureTTSTextSplit保持一致）
+		ctx:                ctx,
+		credential:         credential,
+		speaker:            speaker,
+		synthesizer:        synthesizer,
+		errorHandler:       errorHandler,
+		logger:             logger,
+		enableTextSplit:    true, // 默认启用文本分割
+		firstSegmentMinLen: 3,    // 第一段最小3个字符
+		firstSegmentMaxLen: 5,    // 第一段最大5个字符（真正的5字策略）
+		minSplitLength:     6,    // 总体最小6个字符才分割（降低门槛）
 	}
 }
 
@@ -72,8 +75,11 @@ func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
 	defer s.mu.Unlock()
 
 	s.enableTextSplit = config.Enable
-	if config.SplitRatio > 0 && config.SplitRatio <= 1.0 {
-		s.splitRatio = config.SplitRatio
+	if config.FirstSegmentMinLen > 0 {
+		s.firstSegmentMinLen = config.FirstSegmentMinLen
+	}
+	if config.FirstSegmentMaxLen > 0 {
+		s.firstSegmentMaxLen = config.FirstSegmentMaxLen
 	}
 	if config.MinSplitLength > 0 {
 		s.minSplitLength = config.MinSplitLength
@@ -81,7 +87,8 @@ func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
 
 	s.logger.Info("TTS文本分割配置已更新",
 		zap.Bool("enable", s.enableTextSplit),
-		zap.Float64("splitRatio", s.splitRatio),
+		zap.Int("firstSegmentMinLen", s.firstSegmentMinLen),
+		zap.Int("firstSegmentMaxLen", s.firstSegmentMaxLen),
 		zap.Int("minSplitLength", s.minSplitLength),
 	)
 }
@@ -383,10 +390,11 @@ func (h *segmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
 	// 暂时不处理时间戳
 }
 
-// splitText 智能分割文本
+// splitText 智能分割文本（第一段最小化策略）
 func (s *Service) splitText(text string) []TextSegment {
 	s.mu.RLock()
-	splitRatio := s.splitRatio
+	firstSegmentMinLen := s.firstSegmentMinLen
+	firstSegmentMaxLen := s.firstSegmentMaxLen
 	minSplitLength := s.minSplitLength
 	s.mu.RUnlock()
 
@@ -404,17 +412,13 @@ func (s *Service) splitText(text string) []TextSegment {
 		}
 	}
 
-	// 计算分割点
 	textRunes := []rune(text)
 	textLength := len(textRunes)
 
-	// 根据比例计算初始分割点
-	initialSplitPoint := int(float64(textLength) * splitRatio)
+	// 第一段最小化分割策略
+	firstSegmentEnd := s.findFirstSegmentEnd(textRunes, firstSegmentMinLen, firstSegmentMaxLen)
 
-	// 智能调整分割点，寻找合适的断句位置
-	splitPoint := s.findBestSplitPoint(textRunes, initialSplitPoint)
-
-	if splitPoint <= 0 || splitPoint >= textLength {
+	if firstSegmentEnd <= 0 || firstSegmentEnd >= textLength {
 		// 找不到合适的分割点，不分割
 		return []TextSegment{
 			{
@@ -427,11 +431,11 @@ func (s *Service) splitText(text string) []TextSegment {
 	}
 
 	// 分割文本
-	firstPart := strings.TrimSpace(string(textRunes[:splitPoint]))
-	secondPart := strings.TrimSpace(string(textRunes[splitPoint:]))
+	firstPart := strings.TrimSpace(string(textRunes[:firstSegmentEnd]))
+	remainingPart := strings.TrimSpace(string(textRunes[firstSegmentEnd:]))
 
-	// 检查分割后的部分是否太短
-	if len(firstPart) < 3 || len(secondPart) < 3 {
+	// 检查分割后的部分是否有效
+	if len(firstPart) < 2 || len(remainingPart) < 2 {
 		// 分割后的部分太短，不分割
 		return []TextSegment{
 			{
@@ -443,103 +447,199 @@ func (s *Service) splitText(text string) []TextSegment {
 		}
 	}
 
-	s.logger.Info("文本分割完成",
+	s.logger.Info("TTS文本分割完成（第一段最小化）",
 		zap.String("originalText", text),
 		zap.String("firstPart", firstPart),
-		zap.String("secondPart", secondPart),
-		zap.Int("splitPoint", splitPoint),
-		zap.Float64("actualRatio", float64(splitPoint)/float64(textLength)),
+		zap.String("remainingPart", remainingPart),
+		zap.Int("firstPartLen", len([]rune(firstPart))),
+		zap.Int("remainingPartLen", len([]rune(remainingPart))),
 	)
 
-	return []TextSegment{
+	// 检查剩余部分是否需要进一步分割
+	segments := []TextSegment{
 		{
 			Text:     firstPart,
 			Index:    0,
 			IsLast:   false,
 			Priority: 0, // 第一部分优先级最高
 		},
+	}
+
+	// 对剩余部分进行进一步分割（如果需要）
+	remainingSegments := s.splitRemainingText(remainingPart, 1)
+	segments = append(segments, remainingSegments...)
+
+	return segments
+}
+
+// findFirstSegmentEnd 寻找第一段的结束位置（最小化策略）
+func (s *Service) findFirstSegmentEnd(textRunes []rune, minLen, maxLen int) int {
+	textLength := len(textRunes)
+
+	// 确保不超过文本长度
+	if maxLen > textLength {
+		maxLen = textLength
+	}
+	if minLen > textLength {
+		minLen = textLength
+	}
+
+	// 第一段分割符优先级（优先使用弱分割符，实现最小化）
+	firstSegmentSeparators := []struct {
+		chars    []rune
+		priority int
+	}{
+		// 最高优先级：逗号、顿号（实现最小化分割）
+		{[]rune{'，', ',', '、'}, 1},
+		// 中等优先级：分号、冒号
+		{[]rune{'；', ';', '：', ':'}, 2},
+		// 较低优先级：句号、感叹号、问号（避免过早结束）
+		{[]rune{'。', '！', '？', '.', '!', '?'}, 3},
+		// 最低优先级：换行符
+		{[]rune{'\n'}, 4},
+	}
+
+	bestEnd := -1
+	bestPriority := 999
+
+	// 在最小长度到最大长度范围内寻找分割点
+	for i := minLen; i <= maxLen && i < textLength; i++ {
+		char := textRunes[i]
+
+		for _, sep := range firstSegmentSeparators {
+			for _, sepChar := range sep.chars {
+				if char == sepChar {
+					// 计算距离权重（越靠近最小长度越好）
+					distanceFromMin := i - minLen
+					adjustedPriority := sep.priority + distanceFromMin/5 // 距离权重较小
+
+					if adjustedPriority < bestPriority {
+						bestPriority = adjustedPriority
+						bestEnd = i + 1 // 在分割符后分割
+					}
+				}
+			}
+		}
+	}
+
+	// 如果找到了分割符，使用它
+	if bestEnd > 0 {
+		return bestEnd
+	}
+
+	// 没找到分割符，寻找空格（在最小长度附近）
+	for i := minLen; i <= maxLen && i < textLength; i++ {
+		if unicode.IsSpace(textRunes[i]) {
+			return i + 1 // 在空格后分割
+		}
+	}
+
+	// 都没找到，使用最大长度作为分割点
+	if maxLen < textLength {
+		return maxLen
+	}
+
+	return -1 // 无法分割
+}
+
+// splitRemainingText 分割剩余文本（使用传统策略）
+func (s *Service) splitRemainingText(text string, startIndex int) []TextSegment {
+	// 对于剩余部分，使用传统的完整句子分割策略
+	textRunes := []rune(text)
+	textLength := len(textRunes)
+
+	// 如果剩余文本较短，直接返回
+	if textLength < 30 { // 剩余部分小于30个字符，不再分割
+		return []TextSegment{
+			{
+				Text:     text,
+				Index:    startIndex,
+				IsLast:   true,
+				Priority: startIndex,
+			},
+		}
+	}
+
+	// 寻找完整句子的分割点
+	sentenceEnd := s.findSentenceEnd(textRunes, textLength/2) // 在中间位置寻找句子结束
+
+	if sentenceEnd > 0 && sentenceEnd < textLength {
+		firstPart := strings.TrimSpace(string(textRunes[:sentenceEnd]))
+		secondPart := strings.TrimSpace(string(textRunes[sentenceEnd:]))
+
+		if len(firstPart) >= 5 && len(secondPart) >= 5 {
+			return []TextSegment{
+				{
+					Text:     firstPart,
+					Index:    startIndex,
+					IsLast:   false,
+					Priority: startIndex,
+				},
+				{
+					Text:     secondPart,
+					Index:    startIndex + 1,
+					IsLast:   true,
+					Priority: startIndex + 1,
+				},
+			}
+		}
+	}
+
+	// 无法进一步分割，返回整个剩余部分
+	return []TextSegment{
 		{
-			Text:     secondPart,
-			Index:    1,
+			Text:     text,
+			Index:    startIndex,
 			IsLast:   true,
-			Priority: 1, // 第二部分优先级较低
+			Priority: startIndex,
 		},
 	}
 }
 
-// findBestSplitPoint 寻找最佳分割点
-func (s *Service) findBestSplitPoint(textRunes []rune, initialPoint int) int {
+// findSentenceEnd 寻找句子结束位置（用于剩余文本分割）
+func (s *Service) findSentenceEnd(textRunes []rune, preferredPos int) int {
 	textLength := len(textRunes)
+	searchRange := textLength / 4 // 搜索范围为文本长度的1/4
 
-	// 定义断句标点符号的优先级（数字越小优先级越高）
-	punctuationPriority := map[rune]int{
-		'。': 1, '！': 1, '？': 1, // 句号、感叹号、问号 - 最高优先级
-		'.': 1, '!': 1, '?': 1, // 英文句号、感叹号、问号
-		'；': 2, ';': 2, // 分号 - 高优先级
-		'，': 3, ',': 3, // 逗号 - 中等优先级
-		'：': 4, ':': 4, // 冒号 - 较低优先级
-		'、': 5, // 顿号 - 低优先级
+	minPos := preferredPos - searchRange
+	maxPos := preferredPos + searchRange
+
+	if minPos < 0 {
+		minPos = 0
+	}
+	if maxPos >= textLength {
+		maxPos = textLength - 1
 	}
 
-	// 搜索范围：初始点前后20%的范围
-	searchRange := textLength / 5
-	if searchRange < 5 {
-		searchRange = 5
-	}
+	// 句子结束符（强分割符）
+	sentenceEnders := []rune{'。', '！', '？', '.', '!', '?'}
 
-	minPoint := initialPoint - searchRange
-	maxPoint := initialPoint + searchRange
+	bestPos := -1
+	bestDistance := textLength
 
-	if minPoint < 0 {
-		minPoint = 0
-	}
-	if maxPoint >= textLength {
-		maxPoint = textLength - 1
-	}
-
-	bestPoint := initialPoint
-	bestPriority := 999 // 最低优先级
-
-	// 在搜索范围内寻找最佳断句点
-	for i := minPoint; i <= maxPoint; i++ {
-		if i >= textLength {
-			break
-		}
-
+	// 寻找最接近首选位置的句子结束符
+	for i := minPos; i <= maxPos; i++ {
 		char := textRunes[i]
-		if priority, exists := punctuationPriority[char]; exists {
-			// 计算距离初始点的权重（距离越近越好）
-			distance := abs(i - initialPoint)
-			adjustedPriority := priority + distance/10 // 距离权重
-
-			if adjustedPriority < bestPriority {
-				bestPriority = adjustedPriority
-				bestPoint = i + 1 // 在标点符号后分割
+		for _, ender := range sentenceEnders {
+			if char == ender {
+				distance := abs(i - preferredPos)
+				if distance < bestDistance {
+					bestDistance = distance
+					bestPos = i + 1 // 在句子结束符后分割
+				}
 			}
 		}
 	}
 
-	// 如果找到了标点符号，使用它；否则寻找空格
-	if bestPriority < 999 {
-		return bestPoint
+	return bestPos
+}
+
+// min 辅助函数
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	// 没找到标点符号，寻找空格或其他空白字符
-	for i := minPoint; i <= maxPoint; i++ {
-		if i >= textLength {
-			break
-		}
-
-		char := textRunes[i]
-		if unicode.IsSpace(char) {
-			distance := abs(i - initialPoint)
-			if distance < abs(bestPoint-initialPoint) {
-				bestPoint = i + 1 // 在空格后分割
-			}
-		}
-	}
-
-	return bestPoint
+	return b
 }
 
 // abs 计算绝对值
@@ -567,7 +667,8 @@ func (s *Service) UpdateSpeaker(speakerID string, synthesizer synthesizer.Synthe
 	s.logger.Info("TTS发音人已更新",
 		zap.String("speakerID", speakerID),
 		zap.Bool("enableTextSplit", s.enableTextSplit),
-		zap.Float64("splitRatio", s.splitRatio),
+		zap.Int("firstSegmentMinLen", s.firstSegmentMinLen),
+		zap.Int("firstSegmentMaxLen", s.firstSegmentMaxLen),
 		zap.Int("minSplitLength", s.minSplitLength),
 	)
 }
