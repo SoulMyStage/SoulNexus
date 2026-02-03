@@ -136,7 +136,6 @@ func NewSession(config *SessionConfig) (*Session, error) {
 		config.Logger.Warn("创建过滤词管理器失败，将不使用过滤功能", zap.Error(err))
 		filterManager = nil
 	}
-	filterManager.SetEmojiFiltering(true)
 	// 使用默认采样率，hello消息后会更新
 	audioManager := NewAudioManager(16000, 1, config.Logger)
 
