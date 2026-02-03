@@ -1,4 +1,4 @@
-package tts
+package hardware
 
 import (
 	"context"
@@ -7,23 +7,20 @@ import (
 	"unicode"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/errhandler"
 	"github.com/code-100-precent/LingEcho/pkg/synthesizer"
 	"go.uber.org/zap"
 )
 
-// Service TTS服务实现
-type Service struct {
-	ctx          context.Context
-	credential   *models.UserCredential
-	speaker      string
-	synthesizer  synthesizer.SynthesisService
-	errorHandler *errhandler.Handler
-	logger       *zap.Logger
-	mu           sync.RWMutex
-	closed       bool
-
-	// 文本分割配置
+// TTSService TTS服务实现
+type TTSService struct {
+	ctx             context.Context
+	credential      *models.UserCredential
+	speaker         string
+	synthesizer     synthesizer.SynthesisService
+	errorHandler    *ErrHandler
+	logger          *zap.Logger
+	mu              sync.RWMutex
+	closed          bool
 	enableTextSplit bool    // 是否启用文本分割
 	splitRatio      float64 // 分割比例 (0.0-1.0)
 	minSplitLength  int     // 最小分割长度
@@ -44,16 +41,16 @@ type TextSegment struct {
 	Priority int    `json:"priority"` // 优先级（数字越小优先级越高）
 }
 
-// NewService 创建TTS服务
-func NewService(
+// NewTTSService 创建TTS服务
+func NewTTSService(
 	ctx context.Context,
 	credential *models.UserCredential,
 	speaker string,
 	synthesizer synthesizer.SynthesisService,
-	errorHandler *errhandler.Handler,
+	errorHandler *ErrHandler,
 	logger *zap.Logger,
-) *Service {
-	return &Service{
+) *TTSService {
+	return &TTSService{
 		ctx:             ctx,
 		credential:      credential,
 		speaker:         speaker,
@@ -67,7 +64,7 @@ func NewService(
 }
 
 // SetTextSplitConfig 设置文本分割配置
-func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
+func (s *TTSService) SetTextSplitConfig(config TextSplitConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -87,7 +84,7 @@ func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
 }
 
 // Synthesize 合成语音
-func (s *Service) Synthesize(ctx context.Context, text string) (<-chan []byte, error) {
+func (s *TTSService) Synthesize(ctx context.Context, text string) (<-chan []byte, error) {
 	s.mu.RLock()
 	closed := s.closed
 	synthesizer := s.synthesizer
@@ -99,12 +96,12 @@ func (s *Service) Synthesize(ctx context.Context, text string) (<-chan []byte, e
 			zap.Bool("closed", closed),
 			zap.Bool("synthesizerNil", synthesizer == nil),
 		)
-		return nil, errhandler.NewRecoverableError("TTS", "服务已关闭", nil)
+		return nil, NewRecoverableError("TTS", "服务已关闭", nil)
 	}
 
 	if text == "" {
 		s.logger.Warn("TTS文本为空")
-		return nil, errhandler.NewRecoverableError("TTS", "文本为空", nil)
+		return nil, NewRecoverableError("TTS", "文本为空", nil)
 	}
 
 	s.logger.Info("准备TTS合成",
@@ -122,7 +119,7 @@ func (s *Service) Synthesize(ctx context.Context, text string) (<-chan []byte, e
 }
 
 // synthesizeWithSplit 分割文本进行合成
-func (s *Service) synthesizeWithSplit(ctx context.Context, text string) (<-chan []byte, error) {
+func (s *TTSService) synthesizeWithSplit(ctx context.Context, text string) (<-chan []byte, error) {
 	// 分割文本
 	segments := s.splitText(text)
 
@@ -157,7 +154,7 @@ func (s *Service) synthesizeWithSplit(ctx context.Context, text string) (<-chan 
 }
 
 // synthesizeSegments 合成多个文本片段
-func (s *Service) synthesizeSegments(ctx context.Context, segments []TextSegment, audioChan chan<- []byte) {
+func (s *TTSService) synthesizeSegments(ctx context.Context, segments []TextSegment, audioChan chan<- []byte) {
 	s.mu.RLock()
 	synthesizer := s.synthesizer
 	s.mu.RUnlock()
@@ -226,7 +223,7 @@ func (s *Service) synthesizeSegments(ctx context.Context, segments []TextSegment
 }
 
 // synthesizeSingle 单一文本合成（原有逻辑）
-func (s *Service) synthesizeSingle(ctx context.Context, text string) (<-chan []byte, error) {
+func (s *TTSService) synthesizeSingle(ctx context.Context, text string) (<-chan []byte, error) {
 	s.mu.RLock()
 	synthesizer := s.synthesizer
 	s.mu.RUnlock()
@@ -384,7 +381,7 @@ func (h *segmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
 }
 
 // splitText 智能分割文本
-func (s *Service) splitText(text string) []TextSegment {
+func (s *TTSService) splitText(text string) []TextSegment {
 	s.mu.RLock()
 	splitRatio := s.splitRatio
 	minSplitLength := s.minSplitLength
@@ -468,7 +465,7 @@ func (s *Service) splitText(text string) []TextSegment {
 }
 
 // findBestSplitPoint 寻找最佳分割点
-func (s *Service) findBestSplitPoint(textRunes []rune, initialPoint int) int {
+func (s *TTSService) findBestSplitPoint(textRunes []rune, initialPoint int) int {
 	textLength := len(textRunes)
 
 	// 定义断句标点符号的优先级（数字越小优先级越高）
@@ -542,16 +539,8 @@ func (s *Service) findBestSplitPoint(textRunes []rune, initialPoint int) int {
 	return bestPoint
 }
 
-// abs 计算绝对值
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
 // UpdateSpeaker 更新发音人和合成器
-func (s *Service) UpdateSpeaker(speakerID string, synthesizer synthesizer.SynthesisService) {
+func (s *TTSService) UpdateSpeaker(speakerID string, synthesizer synthesizer.SynthesisService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -573,7 +562,7 @@ func (s *Service) UpdateSpeaker(speakerID string, synthesizer synthesizer.Synthe
 }
 
 // Close 关闭服务
-func (s *Service) Close() error {
+func (s *TTSService) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

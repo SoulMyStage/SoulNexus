@@ -1,4 +1,4 @@
-package llm
+package hardware
 
 import (
 	"context"
@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/errhandler"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/speaker"
 	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"go.uber.org/zap"
 )
 
-// Service LLM服务实现
-type Service struct {
+// LLMService LLM服务实现
+type LLMService struct {
 	ctx            context.Context
 	credential     *models.UserCredential
 	systemPrompt   string
@@ -23,7 +22,7 @@ type Service struct {
 	temperature    float64
 	maxTokens      int
 	provider       llm.LLMProvider
-	errorHandler   *errhandler.Handler
+	errorHandler   *ErrHandler
 	logger         *zap.Logger
 	speakerManager *speaker.Manager             // 新增：发音人管理器
 	speakerConfig  *speaker.SpeakerConfig       // 新增：发音人配置
@@ -32,8 +31,8 @@ type Service struct {
 	closed         bool
 }
 
-// NewService 创建LLM服务
-func NewService(
+// NewLLMService 创建LLM服务
+func NewLLMService(
 	ctx context.Context,
 	credential *models.UserCredential,
 	systemPrompt string,
@@ -41,10 +40,10 @@ func NewService(
 	temperature float64,
 	maxTokens int,
 	provider llm.LLMProvider,
-	errorHandler *errhandler.Handler,
+	errorHandler *ErrHandler,
 	logger *zap.Logger,
-) *Service {
-	service := &Service{
+) *LLMService {
+	service := &LLMService{
 		ctx:          ctx,
 		credential:   credential,
 		systemPrompt: systemPrompt,
@@ -60,7 +59,7 @@ func NewService(
 }
 
 // SetSpeakerManager 设置发音人管理器和切换回调
-func (s *Service) SetSpeakerManager(manager *speaker.Manager, switchCallback func(speakerID string) error) {
+func (s *LLMService) SetSpeakerManager(manager *speaker.Manager, switchCallback func(speakerID string) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -100,18 +99,18 @@ type ToolCallFunction struct {
 }
 
 // QueryStream 流式查询
-func (s *Service) QueryStream(ctx context.Context, text string, onChunk func(chunk LLMStreamResponse)) error {
+func (s *LLMService) QueryStream(ctx context.Context, text string, onChunk func(chunk LLMStreamResponse)) error {
 	s.mu.RLock()
 	closed := s.closed
 	provider := s.provider
 	s.mu.RUnlock()
 
 	if closed || provider == nil {
-		return errhandler.NewRecoverableError("LLM", "服务已关闭", nil)
+		return NewRecoverableError("LLM", "服务已关闭", nil)
 	}
 
 	if text == "" {
-		return errhandler.NewRecoverableError("LLM", "消息为空", nil)
+		return NewRecoverableError("LLM", "消息为空", nil)
 	}
 
 	// 设置系统提示
@@ -189,7 +188,7 @@ func (s *Service) QueryStream(ctx context.Context, text string, onChunk func(chu
 }
 
 // handleNonStreamResponse 处理非流式响应（降级方案）
-func (s *Service) handleNonStreamResponse(
+func (s *LLMService) handleNonStreamResponse(
 	ctx context.Context,
 	provider llm.LLMProvider,
 	text string,
@@ -226,7 +225,7 @@ func (s *Service) handleNonStreamResponse(
 }
 
 // splitIntoSentences 将文本分割为句子（降级方案）
-func (s *Service) splitIntoSentences(text string) []string {
+func (s *LLMService) splitIntoSentences(text string) []string {
 	if text == "" {
 		return nil
 	}
@@ -264,7 +263,7 @@ func (s *Service) splitIntoSentences(text string) []string {
 }
 
 // Query 查询（使用最后一条消息）
-func (s *Service) Query(ctx context.Context, text string) (string, error) {
+func (s *LLMService) Query(ctx context.Context, text string) (string, error) {
 	s.mu.RLock()
 	closed := s.closed
 	provider := s.provider
@@ -273,11 +272,11 @@ func (s *Service) Query(ctx context.Context, text string) (string, error) {
 	s.mu.RUnlock()
 
 	if closed || provider == nil {
-		return "", errhandler.NewRecoverableError("LLM", "服务已关闭", nil)
+		return "", NewRecoverableError("LLM", "服务已关闭", nil)
 	}
 
 	if text == "" {
-		return "", errhandler.NewRecoverableError("LLM", "消息为空", nil)
+		return "", NewRecoverableError("LLM", "消息为空", nil)
 	}
 
 	// 设置系统提示（追加最大token限制提示）
@@ -330,7 +329,7 @@ func (s *Service) Query(ctx context.Context, text string) (string, error) {
 			zap.String("text", text),
 			zap.Duration("timeout", 15*time.Second),
 		)
-		return "", errhandler.NewRecoverableError("LLM", "查询超时，请稍后重试", queryCtx.Err())
+		return "", NewRecoverableError("LLM", "查询超时，请稍后重试", queryCtx.Err())
 
 	case result := <-resultChan:
 		response = result.response
@@ -363,7 +362,7 @@ func (s *Service) Query(ctx context.Context, text string) (string, error) {
 }
 
 // buildEnhancedSystemPrompt 构建增强的系统提示词（包含最大token限制和发音人切换功能）
-func (s *Service) buildEnhancedSystemPrompt() string {
+func (s *LLMService) buildEnhancedSystemPrompt() string {
 	basePrompt := s.systemPrompt
 
 	// 导入发音人切换功能提示词
@@ -467,7 +466,7 @@ func intPtr(i int) *int {
 }
 
 // Close 关闭服务
-func (s *Service) Close() error {
+func (s *LLMService) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -484,7 +483,7 @@ func (s *Service) Close() error {
 }
 
 // registerSpeakerSwitchTool 注册发音人切换工具
-func (s *Service) registerSpeakerSwitchTool() {
+func (s *LLMService) registerSpeakerSwitchTool() {
 	if s.provider == nil || s.speakerConfig == nil {
 		s.logger.Warn("无法注册发音人切换工具：provider或speakerConfig为空",
 			zap.Bool("providerIsNil", s.provider == nil),
@@ -542,7 +541,7 @@ func (s *Service) registerSpeakerSwitchTool() {
 }
 
 // handleSpeakerSwitch 处理发音人切换
-func (s *Service) handleSpeakerSwitch(args map[string]interface{}) (string, error) {
+func (s *LLMService) handleSpeakerSwitch(args map[string]interface{}) (string, error) {
 	s.mu.RLock()
 	speakerManager := s.speakerManager
 	switchCallback := s.switchCallback
@@ -596,7 +595,7 @@ func (s *Service) handleSpeakerSwitch(args map[string]interface{}) (string, erro
 }
 
 // getSpeakerInfo 根据类型获取发音人信息
-func (s *Service) getSpeakerInfo(speakerType string) (string, string, error) {
+func (s *LLMService) getSpeakerInfo(speakerType string) (string, string, error) {
 	if s.speakerConfig == nil {
 		return "", "", fmt.Errorf("发音人配置未初始化")
 	}
@@ -619,7 +618,7 @@ func (s *Service) getSpeakerInfo(speakerType string) (string, string, error) {
 }
 
 // getSupportedTypes 获取支持的发音人类型列表
-func (s *Service) getSupportedTypes() string {
+func (s *LLMService) getSupportedTypes() string {
 	if s.speakerConfig == nil {
 		return "[]"
 	}
@@ -639,7 +638,7 @@ func contains(slice []string, item string) bool {
 }
 
 // tryKeywordBasedSpeakerSwitch 尝试基于关键词的发音人切换（Function Calling的后备方案）
-func (s *Service) tryKeywordBasedSpeakerSwitch(text string, speakerManager *speaker.Manager, switchCallback func(speakerID string) error) {
+func (s *LLMService) tryKeywordBasedSpeakerSwitch(text string, speakerManager *speaker.Manager, switchCallback func(speakerID string) error) {
 	// 检查是否包含明确的切换指令
 	text = strings.ToLower(text)
 

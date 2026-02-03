@@ -1,11 +1,10 @@
-package factory
+package hardware
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/errhandler"
 	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
 	"github.com/code-100-precent/LingEcho/pkg/synthesizer"
@@ -35,7 +34,7 @@ func NewServiceFactory(transcriberFactory *recognizer.DefaultTranscriberFactory,
 func (f *ServiceFactory) CreateASR(credential *models.UserCredential, language string, sampleRate, channels int) (recognizer.TranscribeService, error) {
 	asrProvider := credential.GetASRProvider()
 	if asrProvider == "" {
-		return nil, errhandler.NewRecoverableError("Factory", "ASR provider未配置", nil)
+		return nil, NewRecoverableError("Factory", "ASR provider未配置", nil)
 	}
 
 	normalizedProvider := recognizer.NormalizeProvider(asrProvider)
@@ -64,13 +63,13 @@ func (f *ServiceFactory) CreateASR(credential *models.UserCredential, language s
 	vendor := recognizer.GetVendor(normalizedProvider)
 	if f.transcriberFactory != nil && !f.transcriberFactory.IsVendorSupported(vendor) {
 		supported := f.transcriberFactory.GetSupportedVendors()
-		return nil, errhandler.NewRecoverableError("Factory", fmt.Sprintf("不支持的ASR提供商: %s, 支持的提供商: %v", asrProvider, supported), nil)
+		return nil, NewRecoverableError("Factory", fmt.Sprintf("不支持的ASR提供商: %s, 支持的提供商: %v", asrProvider, supported), nil)
 	}
 
 	// 解析配置
 	config, err := recognizer.NewTranscriberConfigFromMap(normalizedProvider, asrConfig, language)
 	if err != nil {
-		return nil, errhandler.NewRecoverableError("Factory", "解析ASR配置失败", err)
+		return nil, NewRecoverableError("Factory", "解析ASR配置失败", err)
 	}
 
 	// 创建服务
@@ -79,7 +78,7 @@ func (f *ServiceFactory) CreateASR(credential *models.UserCredential, language s
 	}
 	asrService, err := f.transcriberFactory.CreateTranscriber(config)
 	if err != nil {
-		return nil, errhandler.NewRecoverableError("Factory", "创建ASR服务失败", err)
+		return nil, NewRecoverableError("Factory", "创建ASR服务失败", err)
 	}
 
 	return asrService, nil
@@ -92,7 +91,7 @@ func (f *ServiceFactory) CreateTTS(credential *models.UserCredential, speaker st
 		f.logger.Error("TTS provider未配置",
 			zap.Any("ttsConfig", credential.TtsConfig),
 		)
-		return nil, errhandler.NewRecoverableError("Factory", "TTS provider未配置", nil)
+		return nil, NewRecoverableError("Factory", "TTS provider未配置", nil)
 	}
 
 	f.logger.Info("创建TTS服务",
@@ -142,7 +141,7 @@ func (f *ServiceFactory) CreateTTS(credential *models.UserCredential, speaker st
 			zap.String("provider", normalizedProvider),
 			zap.Any("config", ttsConfig),
 		)
-		return nil, errhandler.NewRecoverableError("Factory", "创建TTS服务失败", err)
+		return nil, NewRecoverableError("Factory", "创建TTS服务失败", err)
 	}
 
 	f.logger.Info("TTS服务创建成功", zap.String("provider", normalizedProvider))
@@ -153,7 +152,7 @@ func (f *ServiceFactory) CreateTTS(credential *models.UserCredential, speaker st
 func (f *ServiceFactory) CreateLLM(ctx context.Context, credential *models.UserCredential, systemPrompt string) (llm.LLMProvider, error) {
 	provider, err := llm.NewLLMProvider(ctx, credential, systemPrompt)
 	if err != nil {
-		return nil, errhandler.NewRecoverableError("Factory", "创建LLM服务失败", err)
+		return nil, NewRecoverableError("Factory", "创建LLM服务失败", err)
 	}
 
 	return provider, nil

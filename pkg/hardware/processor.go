@@ -9,13 +9,8 @@ import (
 
 	"github.com/code-100-precent/LingEcho/internal/models"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/audio"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/errhandler"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/factory"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/filter"
-	llmv2 "github.com/code-100-precent/LingEcho/pkg/hardware/llm"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/speaker"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/state"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/tts"
 	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
@@ -168,11 +163,11 @@ func (p *EncoderPool) Close() {
 // Processor 消息处理器
 type Processor struct {
 	stateManager   *state.Manager
-	llmService     *llmv2.Service
-	ttsService     *tts.Service
+	llmService     *LLMService
+	ttsService     *TTSService
 	writer         *Writer
-	errorHandler   *errhandler.Handler
-	filterManager  *filter.Manager
+	errorHandler   *ErrHandler
+	filterManager  *FilterManager
 	audioManager   *audio.Manager
 	speakerManager *speaker.Manager // 新增：发音人管理器
 	logger         *zap.Logger
@@ -180,7 +175,7 @@ type Processor struct {
 	messages       []llm.Message
 	synthesizer    synthesizer.SynthesisService // 用于获取音频格式
 	credential     *models.UserCredential       // 新增：用于重新创建TTS服务
-	serviceFactory *factory.ServiceFactory      // 新增：服务工厂
+	serviceFactory *ServiceFactory              // 新增：服务工厂
 	encoderPool    *EncoderPool                 // 新增：编码器线程池
 
 	// OPUS编码相关（用于硬件协议）
@@ -200,21 +195,19 @@ type Processor struct {
 // NewProcessor 创建消息处理器
 func NewProcessor(
 	stateManager *state.Manager,
-	llmService *llmv2.Service,
-	ttsService *tts.Service,
+	llmService *LLMService,
+	ttsService *TTSService,
 	writer *Writer,
-	errorHandler *errhandler.Handler,
+	errorHandler *ErrHandler,
 	logger *zap.Logger,
 	synthesizer synthesizer.SynthesisService,
-	filterManager *filter.Manager,
+	filterManager *FilterManager,
 	audioManager *audio.Manager,
-	credential *models.UserCredential, // 新增参数
+	credential *models.UserCredential,
 ) *Processor {
-	// 创建服务工厂
 	transcriberFactory := recognizer.GetGlobalFactory()
-	serviceFactory := factory.NewServiceFactory(transcriberFactory, logger)
+	serviceFactory := NewServiceFactory(transcriberFactory, logger)
 
-	// 创建发音人管理器
 	speakerManager := speaker.NewManager(logger)
 
 	processor := &Processor{
@@ -945,8 +938,8 @@ func (p *Processor) handleServiceError(err error, serviceName string) bool {
 
 	classified := p.errorHandler.HandleError(err, serviceName)
 	isFatal := false
-	if classifiedErr, ok := classified.(*errhandler.Error); ok {
-		isFatal = classifiedErr.Type == errhandler.ErrorTypeFatal
+	if classifiedErr, ok := classified.(*Error); ok {
+		isFatal = classifiedErr.Type == ErrorTypeFatal
 		if isFatal {
 			p.stateManager.SetFatalError(true)
 		}
@@ -989,7 +982,7 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 	p.ttsService.UpdateSpeaker(speakerID, synthesizer)
 
 	// 重新配置TTS文本分割（重要：切换发音人后需要重新配置）
-	config := tts.TextSplitConfig{
+	config := TextSplitConfig{
 		Enable:         true, // 启用文本分割
 		SplitRatio:     0.5,  // 一半一半分割
 		MinSplitLength: 15,   // 最小15个字符才分割（适合中文）
@@ -1213,7 +1206,7 @@ func (p *Processor) configureTTSTextSplit() {
 	}
 
 	// 默认启用文本分割配置
-	config := tts.TextSplitConfig{
+	config := TextSplitConfig{
 		Enable:         true, // 启用文本分割
 		SplitRatio:     0.5,  // 一半一半分割
 		MinSplitLength: 15,   // 最小15个字符才分割（适合中文）

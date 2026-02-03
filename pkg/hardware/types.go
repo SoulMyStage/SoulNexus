@@ -5,10 +5,7 @@ import (
 	"fmt"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/media"
-	"github.com/code-100-precent/LingEcho/pkg/recognizer"
-	"github.com/code-100-precent/LingEcho/pkg/synthesizer"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -60,42 +57,6 @@ type SessionInterface interface {
 	IsActive() bool
 }
 
-// ASRService ASR服务接口
-type ASRService interface {
-	// Connect 建立连接
-	Connect() error
-
-	// Disconnect 断开连接
-	Disconnect() error
-
-	// SendAudio 发送音频数据
-	SendAudio(data []byte) error
-
-	// IsConnected 检查是否已连接
-	IsConnected() bool
-
-	// Activity 检查服务是否活跃
-	Activity() bool
-}
-
-// TTSService TTS服务接口
-type TTSService interface {
-	// Synthesize 合成语音
-	Synthesize(ctx context.Context, text string) (<-chan []byte, error)
-
-	// Close 关闭服务
-	Close() error
-}
-
-// LLMService LLM服务接口
-type LLMService interface {
-	// Query 查询
-	Query(ctx context.Context, text string) (string, error)
-
-	// Close 关闭服务
-	Close() error
-}
-
 // MessageWriter 消息写入器接口
 type MessageWriter interface {
 	// SendASRResult 发送ASR识别结果
@@ -145,18 +106,6 @@ type AudioManager interface {
 
 	// Clear 清空状态
 	Clear()
-}
-
-// ServiceFactory 服务工厂接口
-type ServiceFactory interface {
-	// CreateASR 创建ASR服务
-	CreateASR(credential *models.UserCredential, language string, sampleRate, channels int) (recognizer.TranscribeService, error)
-
-	// CreateTTS 创建TTS服务
-	CreateTTS(credential *models.UserCredential, speaker string, sampleRate, channels int) (synthesizer.SynthesisService, error)
-
-	// CreateLLM 创建LLM服务
-	CreateLLM(ctx context.Context, credential *models.UserCredential, systemPrompt string) (llm.LLMProvider, error)
 }
 
 // ErrorType error type enumeration

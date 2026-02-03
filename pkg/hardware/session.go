@@ -8,15 +8,9 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/asr"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/audio"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/errhandler"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/factory"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/filter"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/llm"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/recording"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/state"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/tts"
 	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/code-100-precent/LingEcho/pkg/media/encoder"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
@@ -27,22 +21,20 @@ import (
 
 // Session 语音会话实现
 type Session struct {
-	config        *SessionConfig
-	ctx           context.Context
-	cancel        context.CancelFunc
-	stateManager  *state.Manager
-	errorHandler  *errhandler.Handler
-	asrService    *asr.Service
-	ttsService    *tts.Service
-	llmService    *llm.Service
-	messageWriter *Writer
-	processor     *Processor
-	audioManager  *audio.Manager
-	vadDetector   *VADDetector // VAD 检测器用于 barge-in
-	mu            sync.RWMutex
-	active        bool
-
-	// 录音相关
+	config           *SessionConfig
+	ctx              context.Context
+	cancel           context.CancelFunc
+	stateManager     *state.Manager
+	errorHandler     *ErrHandler
+	asrService       *ASRService
+	ttsService       *TTSService
+	llmService       *LLMService
+	messageWriter    *Writer
+	processor        *Processor
+	audioManager     *audio.Manager
+	vadDetector      *VADDetector // VAD 检测器用于 barge-in
+	mu               sync.RWMutex
+	active           bool
 	recordingManager *recording.RecordingManager
 	recordingSession *recording.RecordingSession
 	db               *gorm.DB
@@ -60,11 +52,11 @@ type Session struct {
 // NewSession 创建新的语音会话
 func NewSession(config *SessionConfig) (*Session, error) {
 	if config == nil {
-		return nil, errhandler.NewRecoverableError("Session", "配置不能为空", nil)
+		return nil, NewRecoverableError("Session", "配置不能为空", nil)
 	}
 
 	if config.Conn == nil {
-		return nil, errhandler.NewRecoverableError("Session", "WebSocket连接不能为空", nil)
+		return nil, NewRecoverableError("Session", "WebSocket连接不能为空", nil)
 	}
 
 	if config.Logger == nil {
@@ -81,11 +73,11 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	stateManager := state.NewManager()
 
 	// 创建错误处理器
-	errorHandler := errhandler.NewHandler(config.Logger)
+	errorHandler := NewErrHandler(config.Logger)
 
 	// 创建服务工厂
 	transcriberFactory := recognizer.GetGlobalFactory()
-	serviceFactory := factory.NewServiceFactory(transcriberFactory, config.Logger)
+	serviceFactory := NewServiceFactory(transcriberFactory, config.Logger)
 
 	// 创建消息写入器
 	messageWriter := NewWriter(config.Conn, config.Logger)
@@ -94,10 +86,10 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	transcriber, err := serviceFactory.CreateASR(config.Credential, config.Language, 0, 0)
 	if err != nil {
 		cancel()
-		return nil, errhandler.NewRecoverableError("Session", "创建ASR服务失败", err)
+		return nil, NewRecoverableError("Session", "创建ASR服务失败", err)
 	}
 
-	asrService := asr.NewService(
+	asrService := NewASRService(
 		ctx,
 		config.Credential,
 		config.Language,
@@ -110,10 +102,10 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	synthesizer, err := serviceFactory.CreateTTS(config.Credential, config.Speaker, 0, 0)
 	if err != nil {
 		cancel()
-		return nil, errhandler.NewRecoverableError("Session", "创建TTS服务失败", err)
+		return nil, NewRecoverableError("Session", "创建TTS服务失败", err)
 	}
 
-	ttsService := tts.NewService(
+	ttsService := NewTTSService(
 		ctx,
 		config.Credential,
 		config.Speaker,
@@ -126,10 +118,10 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	llmProvider, err := serviceFactory.CreateLLM(ctx, config.Credential, config.SystemPrompt)
 	if err != nil {
 		cancel()
-		return nil, errhandler.NewRecoverableError("Session", "创建LLM服务失败", err)
+		return nil, NewRecoverableError("Session", "创建LLM服务失败", err)
 	}
 
-	llmService := llm.NewService(
+	llmService := NewLLMService(
 		ctx,
 		config.Credential,
 		config.SystemPrompt,
@@ -142,13 +134,12 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	)
 
 	// 创建过滤词管理器
-	filterManager, err := filter.NewManager(config.Logger)
+	filterManager, err := NewFilterManager(config.Logger)
 	if err != nil {
 		config.Logger.Warn("创建过滤词管理器失败，将不使用过滤功能", zap.Error(err))
 		filterManager = nil
 	}
-
-	// 创建音频管理器（解决TTS冲突问题）
+	filterManager.SetEmojiFiltering(true)
 	// 使用默认采样率，hello消息后会更新
 	audioManager := audio.NewManager(16000, 1, config.Logger)
 
@@ -270,7 +261,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 		},
 		func(err error) {
 			classified := errorHandler.HandleError(err, "ASR")
-			if classifiedErr, ok := classified.(*errhandler.Error); ok && classifiedErr.Type == errhandler.ErrorTypeFatal {
+			if classifiedErr, ok := classified.(*Error); ok && classifiedErr.Type == ErrorTypeFatal {
 				stateManager.SetFatalError(true)
 				messageWriter.SendError("ASR错误: "+err.Error(), true)
 			}
@@ -291,7 +282,7 @@ func (s *Session) Start() error {
 
 	// 连接ASR服务
 	if err := s.asrService.Connect(); err != nil {
-		return errhandler.NewRecoverableError("Session", "连接ASR服务失败", err)
+		return NewRecoverableError("Session", "连接ASR服务失败", err)
 	}
 
 	// 等待ASR连接建立
@@ -491,7 +482,7 @@ func (s *Session) HandleAudio(data []byte) error {
 	s.mu.RUnlock()
 
 	if !active {
-		return errhandler.NewRecoverableError("Session", "会话未激活", nil)
+		return NewRecoverableError("Session", "会话未激活", nil)
 	}
 
 	// 检查状态
@@ -582,7 +573,7 @@ func (s *Session) HandleText(data []byte) error {
 	s.mu.RUnlock()
 
 	if !active {
-		return errhandler.NewRecoverableError("Session", "会话未激活", nil)
+		return NewRecoverableError("Session", "会话未激活", nil)
 	}
 
 	var msg map[string]interface{}
@@ -753,7 +744,7 @@ func (s *Session) initializeOpusCodecs(sampleRate, channels int, frameDuration s
 // reinitializeServices 重新初始化ASR和TTS服务
 func (s *Session) reinitializeServices(sampleRate, channels int) error {
 	transcriberFactory := recognizer.GetGlobalFactory()
-	serviceFactory := factory.NewServiceFactory(transcriberFactory, s.config.Logger)
+	serviceFactory := NewServiceFactory(transcriberFactory, s.config.Logger)
 
 	// 停止旧的ASR服务
 	s.config.Logger.Info("停止旧的ASR服务")
@@ -772,7 +763,7 @@ func (s *Session) reinitializeServices(sampleRate, channels int) error {
 	}
 
 	// 创建新的ASR服务
-	newASRService := asr.NewService(
+	newASRService := NewASRService(
 		s.ctx,
 		s.config.Credential,
 		s.config.Language,
@@ -796,7 +787,7 @@ func (s *Session) reinitializeServices(sampleRate, channels int) error {
 		},
 		func(err error) {
 			classified := s.errorHandler.HandleError(err, "ASR")
-			if classifiedErr, ok := classified.(*errhandler.Error); ok && classifiedErr.Type == errhandler.ErrorTypeFatal {
+			if classifiedErr, ok := classified.(*Error); ok && classifiedErr.Type == ErrorTypeFatal {
 				s.stateManager.SetFatalError(true)
 				s.messageWriter.SendError("ASR错误: "+err.Error(), true)
 			}
@@ -825,7 +816,7 @@ func (s *Session) reinitializeServices(sampleRate, channels int) error {
 	}
 
 	// 创建新的TTS服务
-	newTTSService := tts.NewService(
+	newTTSService := NewTTSService(
 		s.ctx,
 		s.config.Credential,
 		s.config.Speaker,

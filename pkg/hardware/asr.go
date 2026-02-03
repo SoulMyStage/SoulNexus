@@ -1,4 +1,4 @@
-package asr
+package hardware
 
 import (
 	"context"
@@ -6,20 +6,19 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/errhandler"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/reconnect"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
 	"go.uber.org/zap"
 )
 
-// Service ASR服务实现
-type Service struct {
+// ASRService ASR服务实现
+type ASRService struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	credential   *models.UserCredential
 	language     string
 	transcriber  recognizer.TranscribeService
-	errorHandler *errhandler.Handler
+	errorHandler *ErrHandler
 	reconnectMgr *reconnect.Manager
 	logger       *zap.Logger
 	mu           sync.RWMutex
@@ -28,18 +27,18 @@ type Service struct {
 	onError      func(err error)
 }
 
-// NewService 创建ASR服务
-func NewService(
+// NewASRService 创建ASR服务
+func NewASRService(
 	ctx context.Context,
 	credential *models.UserCredential,
 	language string,
 	transcriber recognizer.TranscribeService,
-	errorHandler *errhandler.Handler,
+	errorHandler *ErrHandler,
 	logger *zap.Logger,
-) *Service {
+) *ASRService {
 	ctx, cancel := context.WithCancel(ctx)
 
-	service := &Service{
+	service := &ASRService{
 		ctx:          ctx,
 		cancel:       cancel,
 		credential:   credential,
@@ -48,7 +47,6 @@ func NewService(
 		errorHandler: errorHandler,
 		logger:       logger,
 	}
-
 	// 创建重连管理器
 	strategy := reconnect.NewExponentialBackoffStrategy()
 	reconnectMgr := reconnect.NewManager(ctx, logger, strategy)
@@ -60,7 +58,7 @@ func NewService(
 }
 
 // SetCallbacks 设置回调函数
-func (s *Service) SetCallbacks(
+func (s *ASRService) SetCallbacks(
 	onResult func(text string, isLast bool, duration time.Duration, uuid string),
 	onError func(err error),
 ) {
@@ -71,7 +69,7 @@ func (s *Service) SetCallbacks(
 }
 
 // Connect 建立连接
-func (s *Service) Connect() error {
+func (s *ASRService) Connect() error {
 	s.mu.Lock()
 	if s.connected {
 		s.mu.Unlock()
@@ -92,11 +90,11 @@ func (s *Service) Connect() error {
 			}
 			if err != nil {
 				classified := s.errorHandler.Classify(err, "ASR")
-				if classified.Type == errhandler.ErrorTypeFatal {
+				if classified.Type == ErrorTypeFatal {
 					s.mu.Lock()
 					s.connected = false
 					s.mu.Unlock()
-				} else if classified.Type == errhandler.ErrorTypeTransient {
+				} else if classified.Type == ErrorTypeTransient {
 					s.reconnectMgr.NotifyDisconnect(err)
 				}
 			}
@@ -110,7 +108,7 @@ func (s *Service) Connect() error {
 }
 
 // Disconnect 断开连接
-func (s *Service) Disconnect() error {
+func (s *ASRService) Disconnect() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -128,14 +126,14 @@ func (s *Service) Disconnect() error {
 }
 
 // SendAudio 发送音频数据
-func (s *Service) SendAudio(data []byte) error {
+func (s *ASRService) SendAudio(data []byte) error {
 	s.mu.RLock()
 	connected := s.connected
 	transcriber := s.transcriber
 	s.mu.RUnlock()
 
 	if !connected || transcriber == nil {
-		return errhandler.NewTransientError("ASR", "服务未连接", nil)
+		return NewTransientError("ASR", "服务未连接", nil)
 	}
 
 	if err := transcriber.SendAudioBytes(data); err != nil {
@@ -145,21 +143,21 @@ func (s *Service) SendAudio(data []byte) error {
 			s.mu.Unlock()
 			s.reconnectMgr.NotifyDisconnect(err)
 		}
-		return errhandler.NewTransientError("ASR", "发送音频失败", err)
+		return NewTransientError("ASR", "发送音频失败", err)
 	}
 
 	return nil
 }
 
 // IsConnected 检查是否已连接
-func (s *Service) IsConnected() bool {
+func (s *ASRService) IsConnected() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.connected
 }
 
 // Activity 检查服务是否活跃
-func (s *Service) Activity() bool {
+func (s *ASRService) Activity() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if !s.connected || s.transcriber == nil {
@@ -169,7 +167,7 @@ func (s *Service) Activity() bool {
 }
 
 // receiveLoop 接收循环
-func (s *Service) receiveLoop() {
+func (s *ASRService) receiveLoop() {
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -190,7 +188,7 @@ func (s *Service) receiveLoop() {
 
 			classified := s.errorHandler.Classify(err, "ASR")
 
-			if classified.Type == errhandler.ErrorTypeFatal {
+			if classified.Type == ErrorTypeFatal {
 				s.logger.Error("ASR连接致命错误", zap.Error(err))
 				if s.onError != nil {
 					s.onError(classified)
@@ -256,7 +254,7 @@ func (s *Service) receiveLoop() {
 }
 
 // reconnect 重连
-func (s *Service) reconnect() error {
+func (s *ASRService) reconnect() error {
 	s.mu.Lock()
 	if s.connected {
 		s.mu.Unlock()
@@ -285,6 +283,6 @@ func (s *Service) reconnect() error {
 }
 
 // onDisconnect 断开连接回调
-func (s *Service) onDisconnect(err error) {
+func (s *ASRService) onDisconnect(err error) {
 	s.logger.Warn("ASR连接断开", zap.Error(err))
 }
