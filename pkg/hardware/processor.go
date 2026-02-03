@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -342,7 +343,7 @@ func (p *Processor) ProcessUserInput(text string) {
 	}
 }
 
-// processText 处理文本（调用LLM和TTS）
+// processText 处理文本（调用LLM和TTS）- 流式处理版本
 // 注意：此方法在goroutine中异步执行，减少锁持有时间
 func (p *Processor) processText(ctx context.Context, text string) {
 	// 设置处理状态
@@ -373,18 +374,104 @@ func (p *Processor) processText(ctx context.Context, text string) {
 	}
 	p.mu.Unlock()
 
-	// 调用LLM（在锁外执行，不阻塞其他操作）
 	// 先创建AI轮次，用于时间记录
 	p.recordAITurnStart()
 
+	// 创建流式文本通道
+	textChan := make(chan string, 100)
+	var fullResponse strings.Builder
+	var responseMu sync.Mutex
+
+	// 启动流式TTS处理
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				p.logger.Error("流式TTS处理发生panic", zap.Any("panic", r))
+			}
+		}()
+
+		err := p.ttsService.SynthesizeStream(ctx, textChan, func(audioData []byte, isFirst bool, isLast bool, segmentIndex int) error {
+			// 发送音频数据到前端
+			if len(audioData) > 0 {
+				if err := p.safeSendTTSAudio(audioData, ctx); err != nil {
+					p.logger.Error("发送TTS音频失败", zap.Error(err), zap.Int("segmentIndex", segmentIndex))
+					return err
+				}
+
+				if isFirst {
+					p.logger.Info("首个TTS片段开始播放",
+						zap.Int("segmentIndex", segmentIndex),
+						zap.Int("audioSize", len(audioData)),
+					)
+				}
+			}
+
+			if isLast {
+				p.logger.Info("TTS流式合成完全结束", zap.Int("segmentIndex", segmentIndex))
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			p.logger.Error("流式TTS处理失败", zap.Error(err))
+		}
+	}()
+
+	// 调用流式LLM
 	llmStartTime := time.Now()
-	response, err := p.llmService.Query(ctx, text)
+	err := p.llmService.QueryStream(ctx, text, func(chunk LLMStreamResponse) {
+		if chunk.Error != nil {
+			p.logger.Error("LLM流式响应错误", zap.Error(chunk.Error))
+			close(textChan)
+			return
+		}
+
+		if chunk.Text != "" {
+			// 记录完整响应
+			responseMu.Lock()
+			fullResponse.WriteString(chunk.Text)
+			responseMu.Unlock()
+
+			// 发送文本片段到TTS
+			select {
+			case textChan <- chunk.Text:
+				p.logger.Debug("发送LLM文本片段到TTS",
+					zap.String("text", chunk.Text),
+					zap.Bool("isStart", chunk.IsStart),
+					zap.Bool("isEnd", chunk.IsEnd),
+				)
+			case <-ctx.Done():
+				p.logger.Info("Context取消，停止发送文本片段")
+				return
+			default:
+				p.logger.Warn("TTS文本通道满，丢弃文本片段", zap.String("text", chunk.Text))
+			}
+
+			// 发送LLM响应给前端（流式）
+			if err := p.writer.SendLLMResponse(chunk.Text); err != nil {
+				p.logger.Error("发送LLM流式响应失败", zap.Error(err))
+			}
+		}
+
+		if chunk.IsEnd {
+			p.logger.Info("LLM流式响应完成")
+			close(textChan) // 关闭通道，通知TTS处理完成
+		}
+	})
+
 	llmEndTime := time.Now()
 
 	if err != nil {
+		close(textChan) // 确保通道关闭
 		p.handleServiceError(err, "LLM")
 		return
 	}
+
+	// 获取完整响应
+	responseMu.Lock()
+	response := fullResponse.String()
+	responseMu.Unlock()
 
 	if response == "" {
 		p.logger.Warn("LLM返回空响应")
@@ -403,11 +490,6 @@ func (p *Processor) processText(ctx context.Context, text string) {
 	p.messages = append(p.messages, assistantMsg)
 	p.mu.Unlock()
 
-	// 发送LLM响应给前端（在锁外执行）
-	if err := p.writer.SendLLMResponse(response); err != nil {
-		p.logger.Error("发送LLM响应失败", zap.Error(err))
-	}
-
 	// 调用AI回复回调函数（用于录音）
 	p.mu.RLock()
 	callback := p.aiResponseCallback
@@ -416,7 +498,10 @@ func (p *Processor) processText(ctx context.Context, text string) {
 		callback(response)
 	}
 
-	// 注意：发音人切换现在由LLM的Function Calling自动处理，无需手动分析
+	p.logger.Info("流式处理完成",
+		zap.String("fullResponse", response),
+		zap.Duration("totalDuration", time.Since(llmStartTime)),
+	)
 
 	// 合成TTS（在goroutine中异步执行，不阻塞）
 	p.logger.Info("准备启动TTS合成", zap.String("text", response))

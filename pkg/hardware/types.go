@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -37,63 +36,6 @@ type SessionConfig struct {
 	EnableVAD            bool    // 是否启用VAD
 	VADThreshold         float64 // VAD阈值
 	VADConsecutiveFrames int     // 需要连续超过阈值的帧数
-}
-
-// SessionInterface 语音会话接口
-type SessionInterface interface {
-	// Start 启动会话
-	Start() error
-
-	// Stop 停止会话
-	Stop() error
-
-	// HandleAudio 处理音频数据
-	HandleAudio(data []byte) error
-
-	// HandleText 处理文本消息
-	HandleText(data []byte) error
-
-	// IsActive 检查会话是否活跃
-	IsActive() bool
-}
-
-// MessageWriter 消息写入器接口
-type MessageWriter interface {
-	// SendASRResult 发送ASR识别结果
-	SendASRResult(text string) error
-
-	// SendTTSAudio 发送TTS音频数据
-	SendTTSAudio(data []byte) error
-
-	// SendError 发送错误消息
-	SendError(message string, fatal bool) error
-
-	// SendConnected 发送连接成功消息
-	SendConnected() error
-
-	// SendLLMResponse 发送LLM响应
-	SendLLMResponse(text string) error
-
-	// SendTTSStart 发送TTS开始消息
-	SendTTSStart(format media.StreamFormat) error
-
-	// SendTTSEnd 发送TTS结束消息
-	SendTTSEnd() error
-
-	// SendWelcome 发送Welcome消息（xiaozhi协议）
-	SendWelcome(audioFormat string, sampleRate, channels int, features map[string]interface{}) (string, error)
-
-	// Close 关闭写入器
-	Close() error
-}
-
-// ErrorHandler 错误处理器接口
-type ErrorHandler interface {
-	// HandleError 处理错误
-	HandleError(err error, service string) error
-
-	// IsFatal 判断是否是致命错误
-	IsFatal(err error) bool
 }
 
 // ErrorType error type enumeration

@@ -127,7 +127,6 @@ func (s *TTSService) Synthesize(ctx context.Context, text string) (<-chan []byte
 	}
 }
 
-// synthesizeWithSplit 分割文本进行合成
 func (s *TTSService) synthesizeWithSplit(ctx context.Context, text string) (<-chan []byte, error) {
 	// 分割文本
 	segments := s.splitText(text)
@@ -654,6 +653,397 @@ func (s *TTSService) UpdateSpeaker(speakerID string, synthesizer synthesizer.Syn
 		zap.Int("firstSegmentMaxLen", s.firstSegmentMaxLen),
 		zap.Int("minSplitLength", s.minSplitLength),
 	)
+}
+
+// StreamingTTSCallback 流式TTS回调函数
+type StreamingTTSCallback func(audioData []byte, isFirst bool, isLast bool, segmentIndex int) error
+
+// SynthesizeStream 流式合成语音（接收LLM流式输出）
+func (s *TTSService) SynthesizeStream(ctx context.Context, textChan <-chan string, callback StreamingTTSCallback) error {
+	s.mu.RLock()
+	closed := s.closed
+	synthesizer := s.synthesizer
+	enableTextSplit := s.enableTextSplit
+	s.mu.RUnlock()
+
+	if closed || synthesizer == nil {
+		s.logger.Error("TTS服务不可用")
+		return NewRecoverableError("TTS", "服务已关闭", nil)
+	}
+
+	s.logger.Info("开始流式TTS合成")
+
+	var textBuffer strings.Builder
+	var segmentIndex int
+	var firstSegmentSent bool
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("流式TTS合成被取消")
+			return ctx.Err()
+
+		case text, ok := <-textChan:
+			if !ok {
+				// 通道关闭，处理剩余文本
+				remaining := textBuffer.String()
+				s.logger.Info("LLM流式输出完成，处理剩余文本",
+					zap.String("remaining", remaining),
+					zap.Int("remainingLen", len([]rune(remaining))),
+					zap.Int("segmentIndex", segmentIndex),
+					zap.Bool("firstSegmentSent", firstSegmentSent),
+				)
+
+				if remaining != "" {
+					// 尝试分割剩余文本
+					if firstSegmentSent {
+						// 已经发送过第一段，尝试提取完整句子
+						if segment := s.tryExtractCompleteSentence(remaining); segment != "" {
+							s.logger.Info("从剩余文本提取句子", zap.String("segment", segment))
+							err := s.synthesizeTextSegment(ctx, segment, segmentIndex, false, false, callback)
+							if err != nil {
+								s.logger.Error("合成剩余句子失败", zap.Error(err))
+							}
+							segmentIndex++
+
+							// 更新剩余文本
+							remaining = strings.TrimSpace(remaining[len(segment):])
+						}
+					}
+
+					// 处理最后的剩余文本
+					if remaining != "" {
+						// 检查剩余文本是否有意义（不只是标点符号）
+						remainingRunes := []rune(strings.TrimSpace(remaining))
+						if len(remainingRunes) >= 2 { // 至少2个字符才值得合成
+							s.logger.Info("处理最后剩余文本", zap.String("text", remaining))
+							err := s.synthesizeTextSegment(ctx, remaining, segmentIndex, true, !firstSegmentSent, callback)
+							if err != nil {
+								s.logger.Error("合成最后剩余文本失败", zap.Error(err))
+							}
+						}
+					}
+				}
+				s.logger.Info("流式TTS合成完成")
+				return nil
+			}
+
+			if text == "" {
+				continue
+			}
+
+			// 将新文本添加到缓冲区
+			textBuffer.WriteString(text)
+			currentText := textBuffer.String()
+
+			s.logger.Debug("收到流式文本",
+				zap.String("newText", text),
+				zap.String("currentBuffer", currentText),
+				zap.Int("bufferLen", len([]rune(currentText))),
+			)
+
+			// 立即检查是否可以提取第一段进行合成（更激进的策略）
+			if !firstSegmentSent && enableTextSplit {
+				if segment := s.tryExtractFirstSegmentAggressive(currentText); segment != "" {
+					s.logger.Info("立即提取第一段进行合成",
+						zap.String("segment", segment),
+						zap.Int("segmentLen", len([]rune(segment))),
+					)
+
+					// 立即合成第一段
+					err := s.synthesizeTextSegment(ctx, segment, segmentIndex, false, true, callback)
+					if err != nil {
+						s.logger.Error("合成第一段失败", zap.Error(err))
+					}
+
+					// 从缓冲区移除已处理的文本
+					remaining := strings.TrimSpace(currentText[len(segment):])
+					textBuffer.Reset()
+					textBuffer.WriteString(remaining)
+
+					segmentIndex++
+					firstSegmentSent = true
+				}
+			}
+
+			// 检查是否有完整的句子可以合成（第一段之后）
+			if firstSegmentSent {
+				currentBuffer := textBuffer.String()
+				s.logger.Debug("检查第二段分割",
+					zap.String("currentBuffer", currentBuffer),
+					zap.Int("bufferLen", len([]rune(currentBuffer))),
+				)
+
+				if segment := s.tryExtractCompleteSentence(currentBuffer); segment != "" {
+					s.logger.Info("提取完整句子进行合成",
+						zap.String("segment", segment),
+						zap.Int("segmentLen", len([]rune(segment))),
+					)
+
+					// 合成句子
+					err := s.synthesizeTextSegment(ctx, segment, segmentIndex, false, false, callback)
+					if err != nil {
+						s.logger.Error("合成句子失败", zap.Error(err))
+					}
+
+					// 从缓冲区移除已处理的文本
+					remaining := strings.TrimSpace(currentBuffer[len(segment):])
+					textBuffer.Reset()
+					textBuffer.WriteString(remaining)
+
+					segmentIndex++
+				} else {
+					s.logger.Debug("未找到可分割的第二段",
+						zap.String("buffer", currentBuffer),
+						zap.Int("bufferLen", len([]rune(currentBuffer))),
+					)
+				}
+			}
+		}
+	}
+}
+
+// tryExtractFirstSegmentAggressive 更激进的第一段提取策略（立即响应）
+func (s *TTSService) tryExtractFirstSegmentAggressive(text string) string {
+	s.mu.RLock()
+	firstSegmentMinLen := s.firstSegmentMinLen
+	firstSegmentMaxLen := s.firstSegmentMaxLen
+	s.mu.RUnlock()
+
+	textRunes := []rune(strings.TrimSpace(text))
+	textLength := len(textRunes)
+
+	// 超激进：只要达到最小长度就开始寻找分割点
+	if textLength < firstSegmentMinLen {
+		return "" // 文本太短，等待更多内容
+	}
+
+	// 第一段分割符（优先使用弱分割符，更容易触发）
+	weakSeparators := []rune{'～', '~', '，', ',', '、', '；', ';', '：', ':'}
+	strongSeparators := []rune{'。', '！', '？', '.', '!', '?', '\n'}
+
+	// 超激进策略1：在最小长度处立即寻找弱分割符
+	for i := firstSegmentMinLen; i <= min(textLength, firstSegmentMaxLen); i++ {
+		if i >= textLength {
+			break
+		}
+
+		char := textRunes[i-1] // 检查当前位置的字符
+		// 优先检查弱分割符
+		for _, sep := range weakSeparators {
+			if char == sep {
+				segment := strings.TrimSpace(string(textRunes[:i]))
+				if len([]rune(segment)) >= firstSegmentMinLen {
+					return segment
+				}
+			}
+		}
+	}
+
+	// 超激进策略2：检查强分割符
+	for i := firstSegmentMinLen; i <= min(textLength, firstSegmentMaxLen); i++ {
+		if i >= textLength {
+			break
+		}
+
+		char := textRunes[i-1]
+		for _, sep := range strongSeparators {
+			if char == sep {
+				segment := strings.TrimSpace(string(textRunes[:i]))
+				if len([]rune(segment)) >= firstSegmentMinLen {
+					return segment
+				}
+			}
+		}
+	}
+
+	// 超激进策略3：词汇边界立即分割（最关键的优化）
+	if textLength >= firstSegmentMinLen {
+		// 寻找词汇边界（中文常见的词汇分割点）
+		wordBoundaries := []string{"哦", "啊", "呢", "吧", "的", "了", "在", "是", "有", "我", "你", "他", "她", "它"}
+
+		for i := firstSegmentMinLen; i <= min(textLength, firstSegmentMinLen+2); i++ {
+			for _, boundary := range wordBoundaries {
+				if i >= len(boundary) && strings.HasSuffix(string(textRunes[:i]), boundary) {
+					segment := strings.TrimSpace(string(textRunes[:i]))
+					if len([]rune(segment)) >= firstSegmentMinLen {
+						s.logger.Debug("通过词汇边界提取第一段",
+							zap.String("boundary", boundary),
+							zap.String("segment", segment),
+						)
+						return segment
+					}
+				}
+			}
+		}
+	}
+
+	// 超激进策略4：如果文本已经比较长，在空格处分割
+	if textLength >= firstSegmentMaxLen {
+		for i := firstSegmentMaxLen; i >= firstSegmentMinLen; i-- {
+			if i < textLength && unicode.IsSpace(textRunes[i]) {
+				return strings.TrimSpace(string(textRunes[:i]))
+			}
+		}
+		// 最激进：强制在最大长度处分割
+		return strings.TrimSpace(string(textRunes[:firstSegmentMaxLen]))
+	}
+
+	// 超激进策略5：如果文本长度达到5个字符，立即分割（最激进的策略）
+	if textLength >= 5 {
+		segment := strings.TrimSpace(string(textRunes[:5]))
+		s.logger.Debug("超激进5字符分割",
+			zap.String("segment", segment),
+			zap.Int("textLength", textLength),
+		)
+		return segment
+	}
+
+	return "" // 等待更多内容
+}
+
+// tryExtractCompleteSentence 尝试提取完整句子
+func (s *TTSService) tryExtractCompleteSentence(text string) string {
+	textRunes := []rune(strings.TrimSpace(text))
+	textLength := len(textRunes)
+
+	if textLength < 3 { // 最小长度要求
+		return "" // 文本太短
+	}
+
+	// 句子结束符（扩展列表，包含中文常用符号）
+	sentenceEnders := []rune{'。', '！', '？', '.', '!', '?', '～', '~', '，', ',', '；', ';', '：', ':'}
+
+	// 寻找句子结束符（从第3个字符开始）
+	for i := 3; i < textLength; i++ {
+		char := textRunes[i]
+		for _, ender := range sentenceEnders {
+			if char == ender {
+				sentence := strings.TrimSpace(string(textRunes[:i+1]))
+				if len([]rune(sentence)) >= 3 {
+					return sentence
+				}
+			}
+		}
+	}
+
+	// 如果文本较长但没有结束符，按长度分割
+	if textLength > 15 {
+		// 寻找逗号或分号进行分割
+		for i := 8; i < textLength && i < 15; i++ {
+			char := textRunes[i]
+			if char == '，' || char == ',' || char == '；' || char == ';' || char == '：' || char == ':' {
+				return strings.TrimSpace(string(textRunes[:i+1]))
+			}
+		}
+		// 强制分割
+		return strings.TrimSpace(string(textRunes[:15]))
+	}
+
+	// 关键改进：如果没有找到分割点，但文本不为空且长度合理，直接返回整个文本
+	if textLength >= 3 {
+		s.logger.Debug("没有找到分割点，直接合成整个文本",
+			zap.String("text", text),
+			zap.Int("textLen", textLength),
+		)
+		return strings.TrimSpace(text)
+	}
+
+	return "" // 文本太短，等待更多内容
+}
+
+// synthesizeTextSegment 合成文本片段
+func (s *TTSService) synthesizeTextSegment(ctx context.Context, text string, segmentIndex int, isLast bool, isFirst bool, callback StreamingTTSCallback) error {
+	if text == "" {
+		return nil
+	}
+
+	s.logger.Info("开始合成文本片段",
+		zap.String("text", text),
+		zap.Int("segmentIndex", segmentIndex),
+		zap.Bool("isFirst", isFirst),
+		zap.Bool("isLast", isLast),
+	)
+
+	// 创建片段处理器
+	handler := &streamingSegmentHandler{
+		callback:     callback,
+		ctx:          ctx,
+		logger:       s.logger,
+		text:         text,
+		segmentIndex: segmentIndex,
+		isFirst:      isFirst,
+		isLast:       isLast,
+	}
+
+	// 合成当前片段
+	err := s.synthesizer.Synthesize(ctx, handler, text)
+	if err != nil {
+		classified := s.errorHandler.Classify(err, "TTS")
+		s.logger.Error("TTS片段合成失败",
+			zap.Error(classified),
+			zap.Int("segmentIndex", segmentIndex),
+			zap.String("text", text),
+		)
+		return classified
+	}
+
+	s.logger.Info("文本片段合成完成",
+		zap.Int("segmentIndex", segmentIndex),
+		zap.String("text", text),
+	)
+
+	return nil
+}
+
+// streamingSegmentHandler 流式片段处理器
+type streamingSegmentHandler struct {
+	callback     StreamingTTSCallback
+	ctx          context.Context
+	logger       *zap.Logger
+	text         string
+	segmentIndex int
+	isFirst      bool
+	isLast       bool
+	chunkCount   int
+	totalBytes   int
+}
+
+func (h *streamingSegmentHandler) OnMessage(data []byte) {
+	if len(data) > 0 {
+		h.chunkCount++
+		h.totalBytes += len(data)
+
+		// 每10个chunk记录一次进度
+		if h.chunkCount%10 == 1 {
+			h.logger.Debug("流式TTS音频数据接收中",
+				zap.Int("segmentIndex", h.segmentIndex),
+				zap.Int("chunkCount", h.chunkCount),
+				zap.Int("chunkSize", len(data)),
+				zap.Int("totalBytes", h.totalBytes),
+				zap.Bool("isFirst", h.isFirst),
+			)
+		}
+	}
+
+	select {
+	case <-h.ctx.Done():
+		// Context已取消，不再发送数据
+		return
+	default:
+		// 调用回调函数发送音频数据
+		if err := h.callback(data, h.isFirst && h.chunkCount == 1, h.isLast && len(data) == 0, h.segmentIndex); err != nil {
+			h.logger.Warn("流式TTS回调失败",
+				zap.Error(err),
+				zap.Int("segmentIndex", h.segmentIndex),
+				zap.Int("chunkSize", len(data)),
+			)
+		}
+	}
+}
+
+func (h *streamingSegmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
+	// 暂时不处理时间戳
 }
 
 // Close 关闭服务
