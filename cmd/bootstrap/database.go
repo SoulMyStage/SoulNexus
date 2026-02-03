@@ -147,59 +147,44 @@ func RunMigrations(db *gorm.DB) error {
 		&models.PromptModel{},
 		&models.PromptArgModel{},
 		&notification.InternalNotification{},
-		&models.Knowledge{}, // New knowledge base model
-		// Voice training related rtcmedia
+		&models.Knowledge{},
 		&models.VoiceTrainingTask{},
 		&models.VoiceClone{},
+		&models.Voiceprint{},
 		&models.VoiceSynthesis{},
-		// Must be before VoiceTrainingTextSegment
 		&models.VoiceTrainingText{},
-		// Depends on VoiceTrainingText
 		&models.VoiceTrainingTextSegment{},
-		// Operation log model
 		&middleware.OperationLog{},
 		&models.JSTemplate{},
 		&models.JSTemplateVersion{},
-		// Device model for OTA
 		&models.Device{},
-		// OTA firmware model
 		&models.OTA{},
-		// Billing models
 		&models.UsageRecord{},
 		&models.Bill{},
-		// Alert models
 		&models.AlertRule{},
 		&models.Alert{},
 		&models.AlertNotification{},
-		// Quota models
 		&models.UserQuota{},
 		&models.GroupQuota{},
 		&models.WorkflowDefinition{},
 		&models.WorkflowInstance{},
 		&models.WorkflowVersion{},
-		// Workflow plugin models
 		&models.WorkflowPlugin{},
 		&models.WorkflowPluginVersion{},
 		&models.WorkflowPluginReview{},
 		&models.WorkflowPluginInstallation{},
-		// Node plugin models
 		&models.NodePlugin{},
 		&models.NodePluginVersion{},
 		&models.NodePluginReview{},
 		&models.NodePluginInstallation{},
 		&models.OverviewConfig{},
-		// Login security models
-		&models.UserDevice{},   // 用户设备管理表
-		&models.LoginHistory{}, // 登录历史记录表
-		&models.AccountLock{},  // 账号锁定记录表
-		// SIP user model
-		&models.SipUser{}, // SIP用户表
-		// SIP call model
-		&models.SipCall{}, // SIP通话记录表
+		&models.UserDevice{},
+		&models.LoginHistory{},
+		&models.AccountLock{},
+		&models.SipUser{},
+		&models.SipCall{},
 		&models.DeviceErrorLog{},
 		&models.CallRecording{},
 		&models.DevicePerformanceLog{},
-		// Voiceprint model
-		&models.Voiceprint{},
 	})
 }

@@ -12,27 +12,23 @@ import (
 
 // SessionConfig 会话配置
 type SessionConfig struct {
-	Conn         *websocket.Conn
-	Credential   *models.UserCredential
-	AssistantID  uint // 改为uint类型
-	Language     string
-	Speaker      string
-	Temperature  float64
-	MaxTokens    int
-	SystemPrompt string
-	KnowledgeKey string
-	LLMModel     string
-	DB           *gorm.DB
-	Logger       *zap.Logger
-	Context      context.Context
-
-	// 录音相关配置
-	UserID        uint    // 用户ID
-	DeviceID      *string // 设备ID（MAC地址）
-	MacAddress    string  // MAC地址
-	RecordingPath string  // 录音文件存储路径
-
-	// VAD 配置
+	Conn                 *websocket.Conn
+	Credential           *models.UserCredential
+	AssistantID          uint // 改为uint类型
+	Language             string
+	Speaker              string
+	Temperature          float64
+	MaxTokens            int
+	SystemPrompt         string
+	KnowledgeKey         string
+	LLMModel             string
+	DB                   *gorm.DB
+	Logger               *zap.Logger
+	Context              context.Context
+	UserID               uint    // 用户ID
+	DeviceID             *string // 设备ID（MAC地址）
+	MacAddress           string  // MAC地址
+	RecordingPath        string  // 录音文件存储路径
 	EnableVAD            bool    // 是否启用VAD
 	VADThreshold         float64 // VAD阈值
 	VADConsecutiveFrames int     // 需要连续超过阈值的帧数

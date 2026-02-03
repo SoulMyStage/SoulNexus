@@ -271,14 +271,11 @@ func (s *SeedService) seedPromptArgs() error {
 	defaultArgs := []models.PromptArgModel{
 		// summarize_article
 		{Name: "content", Description: "Article content to be summarized", Required: true, PromptID: 1},
-
 		// translate_text
 		{Name: "text", Description: "Text to be translated", Required: true, PromptID: 2},
 		{Name: "target_language", Description: "Target language (e.g., en, zh)", Required: true, PromptID: 2},
-
 		// generate_title
 		{Name: "article", Description: "Article content", Required: true, PromptID: 3},
-
 		// email_reply_generator
 		{Name: "email_body", Description: "Original email content", Required: true, PromptID: 4},
 		{Name: "tone", Description: "Reply tone (e.g., formal, casual)", Required: false, PromptID: 4},
