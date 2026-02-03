@@ -14,7 +14,6 @@ import (
 	"github.com/code-100-precent/LingEcho/pkg/hardware/factory"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/filter"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/llm"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/message"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/recording"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/state"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/tts"
@@ -36,8 +35,8 @@ type Session struct {
 	asrService    *asr.Service
 	ttsService    *tts.Service
 	llmService    *llm.Service
-	messageWriter *message.Writer
-	processor     *message.Processor
+	messageWriter *Writer
+	processor     *Processor
 	audioManager  *audio.Manager
 	vadDetector   *VADDetector // VAD 检测器用于 barge-in
 	mu            sync.RWMutex
@@ -89,7 +88,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	serviceFactory := factory.NewServiceFactory(transcriberFactory, config.Logger)
 
 	// 创建消息写入器
-	messageWriter := message.NewWriter(config.Conn, config.Logger)
+	messageWriter := NewWriter(config.Conn, config.Logger)
 
 	// 创建ASR服务（使用默认配置，hello消息后会重新初始化）
 	transcriber, err := serviceFactory.CreateASR(config.Credential, config.Language, 0, 0)
@@ -183,7 +182,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	}
 
 	// 创建消息处理器
-	processor := message.NewProcessor(
+	processor := NewProcessor(
 		stateManager,
 		llmService,
 		ttsService,
