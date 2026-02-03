@@ -8,9 +8,6 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/audio"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/recording"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/state"
 	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/code-100-precent/LingEcho/pkg/media/encoder"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
@@ -24,19 +21,19 @@ type Session struct {
 	config           *SessionConfig
 	ctx              context.Context
 	cancel           context.CancelFunc
-	stateManager     *state.Manager
+	stateManager     *HardwareStateManager
 	errorHandler     *ErrHandler
 	asrService       *ASRService
 	ttsService       *TTSService
 	llmService       *LLMService
 	messageWriter    *Writer
 	processor        *Processor
-	audioManager     *audio.Manager
+	audioManager     *AudioManager
 	vadDetector      *VADDetector // VAD 检测器用于 barge-in
 	mu               sync.RWMutex
 	active           bool
-	recordingManager *recording.RecordingManager
-	recordingSession *recording.RecordingSession
+	recordingManager *RecordingManager
+	recordingSession *RecordingSession
 	db               *gorm.DB
 
 	// 音频格式配置（从硬件获取）
@@ -70,7 +67,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	ctx, cancel := context.WithCancel(config.Context)
 
 	// 创建状态管理器
-	stateManager := state.NewManager()
+	stateManager := NewHardwareStateManager()
 
 	// 创建错误处理器
 	errorHandler := NewErrHandler(config.Logger)
@@ -141,7 +138,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	}
 	filterManager.SetEmojiFiltering(true)
 	// 使用默认采样率，hello消息后会更新
-	audioManager := audio.NewManager(16000, 1, config.Logger)
+	audioManager := NewAudioManager(16000, 1, config.Logger)
 
 	// 创建 VAD 检测器，使用配置中的参数
 	vadDetector := NewVADDetector()
@@ -165,11 +162,11 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	}
 
 	// 创建录音管理器
-	var recordingManager *recording.RecordingManager
+	var recordingManager *RecordingManager
 	var db *gorm.DB
 	if config.DB != nil {
 		db = config.DB
-		recordingManager = recording.NewRecordingManager(db, config.Logger, config.RecordingPath)
+		recordingManager = NewRecordingManager(db, config.Logger, config.RecordingPath)
 	}
 
 	// 创建消息处理器
@@ -290,9 +287,9 @@ func (s *Session) Start() error {
 
 	// 开始录音（如果录音管理器可用）
 	if s.recordingManager != nil && s.config.UserID > 0 && s.config.AssistantID > 0 {
-		recordingConfig := &recording.RecordingConfig{
+		recordingConfig := &RecordingConfig{
 			UserID:      s.config.UserID,
-			AssistantID: uint(s.config.AssistantID),
+			AssistantID: s.config.AssistantID,
 			DeviceID:    s.config.DeviceID,
 			MacAddress:  s.config.MacAddress,
 			SessionID:   fmt.Sprintf("session_%d_%d", time.Now().Unix(), s.config.UserID),
@@ -670,7 +667,7 @@ func (s *Session) handleHelloMessage(msg map[string]interface{}) {
 	}
 
 	// 更新音频管理器配置
-	s.audioManager = audio.NewManager(sampleRate, channels, s.config.Logger)
+	s.audioManager = NewAudioManager(sampleRate, channels, s.config.Logger)
 
 	// 提取features
 	var features map[string]interface{}

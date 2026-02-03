@@ -454,17 +454,6 @@ func getSpeakerSystemPrompt() string {
 `
 }
 
-// float32Ptr 返回 float32 指针
-func float32Ptr(f float64) *float32 {
-	val := float32(f)
-	return &val
-}
-
-// intPtr 返回 int 指针
-func intPtr(i int) *int {
-	return &i
-}
-
 // Close 关闭服务
 func (s *LLMService) Close() error {
 	s.mu.Lock()

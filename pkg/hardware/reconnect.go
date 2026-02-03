@@ -1,4 +1,4 @@
-package reconnect
+package hardware
 
 import (
 	"context"
@@ -77,7 +77,7 @@ func pow(base, exp float64) float64 {
 }
 
 // Manager 重连管理器
-type Manager struct {
+type ReconnectManager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logger       *zap.Logger
@@ -91,9 +91,9 @@ type Manager struct {
 }
 
 // NewManager 创建重连管理器
-func NewManager(ctx context.Context, logger *zap.Logger, strategy Strategy) *Manager {
+func NewManager(ctx context.Context, logger *zap.Logger, strategy Strategy) *ReconnectManager {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Manager{
+	return &ReconnectManager{
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   logger,
@@ -103,21 +103,21 @@ func NewManager(ctx context.Context, logger *zap.Logger, strategy Strategy) *Man
 }
 
 // SetReconnectCallback 设置重连回调
-func (m *Manager) SetReconnectCallback(fn func() error) {
+func (m *ReconnectManager) SetReconnectCallback(fn func() error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onReconnect = fn
 }
 
 // SetDisconnectCallback 设置断开连接回调
-func (m *Manager) SetDisconnectCallback(fn func(error)) {
+func (m *ReconnectManager) SetDisconnectCallback(fn func(error)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onDisconnect = fn
 }
 
 // Start 启动重连管理器
-func (m *Manager) Start() error {
+func (m *ReconnectManager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -133,7 +133,7 @@ func (m *Manager) Start() error {
 }
 
 // Stop 停止重连管理器
-func (m *Manager) Stop() {
+func (m *ReconnectManager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -143,7 +143,7 @@ func (m *Manager) Stop() {
 }
 
 // NotifyDisconnect 通知连接断开
-func (m *Manager) NotifyDisconnect(err error) {
+func (m *ReconnectManager) NotifyDisconnect(err error) {
 	m.mu.Lock()
 	shouldStart := !m.reconnecting
 	if shouldStart {
@@ -161,14 +161,14 @@ func (m *Manager) NotifyDisconnect(err error) {
 }
 
 // IsReconnecting 检查是否正在重连
-func (m *Manager) IsReconnecting() bool {
+func (m *ReconnectManager) IsReconnecting() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.reconnecting
 }
 
 // reconnectLoop 重连循环
-func (m *Manager) reconnectLoop() {
+func (m *ReconnectManager) reconnectLoop() {
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -243,7 +243,7 @@ func (m *Manager) reconnectLoop() {
 }
 
 // Reset 重置重连状态
-func (m *Manager) Reset() {
+func (m *ReconnectManager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.attempt = 0

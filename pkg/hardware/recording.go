@@ -1,4 +1,4 @@
-package recording
+package hardware
 
 import (
 	"context"
@@ -13,8 +13,6 @@ import (
 	"github.com/LingByte/lingstorage-sdk-go"
 	"github.com/code-100-precent/LingEcho/internal/models"
 	"github.com/code-100-precent/LingEcho/pkg/config"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/analysis"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/conversation"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -23,12 +21,12 @@ import (
 type RecordingManager struct {
 	db              *gorm.DB
 	logger          *zap.Logger
-	storagePath     string                    // 录音文件存储路径
-	maxFileSize     int64                     // 最大文件大小 (字节)
-	maxDuration     int                       // 最大录音时长 (秒)
-	enableCleanup   bool                      // 是否启用自动清理
-	retentionDays   int                       // 保留天数
-	analysisService *analysis.AnalysisService // AI分析服务
+	storagePath     string           // 录音文件存储路径
+	maxFileSize     int64            // 最大文件大小 (字节)
+	maxDuration     int              // 最大录音时长 (秒)
+	enableCleanup   bool             // 是否启用自动清理
+	retentionDays   int              // 保留天数
+	analysisService *AnalysisService // AI分析服务
 }
 
 // NewRecordingManager 创建录音管理器
@@ -40,8 +38,8 @@ func NewRecordingManager(db *gorm.DB, logger *zap.Logger, storagePath string) *R
 		maxFileSize:     100 * 1024 * 1024, // 100MB
 		maxDuration:     3600,              // 1小时
 		enableCleanup:   true,
-		retentionDays:   30,                              // 保留30天
-		analysisService: analysis.NewAnalysisService(db), // 初始化AI分析服务
+		retentionDays:   30,                     // 保留30天
+		analysisService: NewAnalysisService(db), // 初始化AI分析服务
 	}
 }
 
@@ -77,7 +75,7 @@ type RecordingSession struct {
 	pcmDataSize      int64 // PCM数据大小，用于WAV头部
 
 	// 对话轮次跟踪
-	conversationTurns []conversation.ConversationTurn
+	conversationTurns []models.ConversationTurn
 	currentTurnID     int
 	interruptions     int
 }
@@ -260,7 +258,7 @@ func (rs *RecordingSession) createUserTurn(content string) {
 	rs.currentTurnID++
 	now := time.Now()
 
-	turn := conversation.ConversationTurn{
+	turn := models.ConversationTurn{
 		TurnID:    rs.currentTurnID,
 		Timestamp: now,
 		Type:      "user",
@@ -278,7 +276,7 @@ func (rs *RecordingSession) createAITurn(content string) {
 	rs.currentTurnID++
 	now := time.Now()
 
-	turn := conversation.ConversationTurn{
+	turn := models.ConversationTurn{
 		TurnID:    rs.currentTurnID,
 		Timestamp: now,
 		Type:      "ai",
@@ -296,7 +294,7 @@ func (rs *RecordingSession) StartUserTurn() {
 	rs.currentTurnID++
 	now := time.Now()
 
-	turn := conversation.ConversationTurn{
+	turn := models.ConversationTurn{
 		TurnID:    rs.currentTurnID,
 		Timestamp: now,
 		Type:      "user",
@@ -346,7 +344,7 @@ func (rs *RecordingSession) StartAITurn() {
 	rs.currentTurnID++
 	now := time.Now()
 
-	turn := conversation.ConversationTurn{
+	turn := models.ConversationTurn{
 		TurnID:    rs.currentTurnID,
 		Timestamp: now,
 		Type:      "ai",
@@ -605,7 +603,7 @@ func (rs *RecordingSession) updateWAVHeader() error {
 }
 
 // generateConversationDetails 生成对话详情数据
-func (rs *RecordingSession) generateConversationDetails() *conversation.ConversationDetails {
+func (rs *RecordingSession) generateConversationDetails() *models.ConversationDetails {
 	userTurns := 0
 	aiTurns := 0
 
@@ -617,7 +615,7 @@ func (rs *RecordingSession) generateConversationDetails() *conversation.Conversa
 		}
 	}
 
-	return &conversation.ConversationDetails{
+	return &models.ConversationDetails{
 		SessionID:     rs.config.SessionID,
 		StartTime:     rs.startTime,
 		EndTime:       rs.endTime,
@@ -630,8 +628,8 @@ func (rs *RecordingSession) generateConversationDetails() *conversation.Conversa
 }
 
 // generateTimingMetrics 生成时间指标数据
-func (rs *RecordingSession) generateTimingMetrics() *conversation.TimingMetrics {
-	metrics := &conversation.TimingMetrics{
+func (rs *RecordingSession) generateTimingMetrics() *models.TimingMetrics {
+	metrics := &models.TimingMetrics{
 		SessionDuration: rs.endTime.Sub(rs.startTime).Milliseconds(),
 	}
 

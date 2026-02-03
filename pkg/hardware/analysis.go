@@ -1,4 +1,4 @@
-package analysis
+package hardware
 
 import (
 	"context"
@@ -366,14 +366,4 @@ func (s *AnalysisService) BatchAnalyzeRecordings(ctx context.Context, userID uin
 	}
 
 	return nil
-}
-
-// 辅助函数
-func intPtr(i int) *int {
-	return &i
-}
-
-func float32Ptr(f float64) *float32 {
-	val := float32(f)
-	return &val
 }

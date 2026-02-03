@@ -1,4 +1,4 @@
-package audio
+package hardware
 
 import (
 	"sync"
@@ -14,9 +14,9 @@ const (
 	audioEnergyThreshold = 1000
 )
 
-// Manager 音频管理器 - 解决TTS冲突问题
+// AudioManager 音频管理器 - 解决TTS冲突问题
 // 通过智能过滤TTS回音，实现真正的双向流
-type Manager struct {
+type AudioManager struct {
 	mu              sync.RWMutex
 	logger          *zap.Logger
 	ttsOutputBuffer []TTSFrame // TTS输出音频缓冲区（用于回声消除）
@@ -34,14 +34,14 @@ type TTSFrame struct {
 	Energy    int64 // 音频能量（用于快速匹配）
 }
 
-// NewManager 创建音频管理器
-func NewManager(sampleRate, channels int, logger *zap.Logger) *Manager {
+// NewAudioManager 创建音频管理器
+func NewAudioManager(sampleRate, channels int, logger *zap.Logger) *AudioManager {
 	// 计算最大TTS样本数（基于回音抑制窗口）
 	// 假设16-bit PCM，每样本2字节
 	samplesPerMs := sampleRate * channels / 1000
 	maxSamples := samplesPerMs * ttsEchoSuppressionWindow / 2 // 除以2因为16-bit
 
-	return &Manager{
+	return &AudioManager{
 		logger:          logger,
 		ttsOutputBuffer: make([]TTSFrame, 0, 100),
 		sampleRate:      sampleRate,
@@ -53,7 +53,7 @@ func NewManager(sampleRate, channels int, logger *zap.Logger) *Manager {
 
 // ProcessInputAudio 处理输入音频（智能过滤TTS回音）
 // 返回 (处理后的音频数据, 是否应该处理)
-func (m *Manager) ProcessInputAudio(data []byte, ttsPlaying bool) ([]byte, bool) {
+func (m *AudioManager) ProcessInputAudio(data []byte, ttsPlaying bool) ([]byte, bool) {
 	if len(data) == 0 {
 		return nil, false
 	}
@@ -90,7 +90,7 @@ func (m *Manager) ProcessInputAudio(data []byte, ttsPlaying bool) ([]byte, bool)
 }
 
 // RecordTTSOutput 记录TTS输出音频（用于回声消除）
-func (m *Manager) RecordTTSOutput(data []byte) {
+func (m *AudioManager) RecordTTSOutput(data []byte) {
 	if len(data) == 0 {
 		return
 	}
@@ -130,7 +130,7 @@ func (m *Manager) RecordTTSOutput(data []byte) {
 }
 
 // isTTSEcho 检查输入音频是否是TTS回音
-func (m *Manager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
+func (m *AudioManager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
 	if len(m.ttsOutputBuffer) == 0 {
 		return false
 	}
@@ -173,7 +173,7 @@ func (m *Manager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
 }
 
 // calculateEnergy 计算音频能量
-func (m *Manager) calculateEnergy(data []byte) int64 {
+func (m *AudioManager) calculateEnergy(data []byte) int64 {
 	if len(data) < 2 {
 		return 0
 	}
@@ -194,7 +194,7 @@ func (m *Manager) calculateEnergy(data []byte) int64 {
 }
 
 // calculateSimilarity 计算两个音频数据的相似度
-func (m *Manager) calculateSimilarity(data1, data2 []byte) float64 {
+func (m *AudioManager) calculateSimilarity(data1, data2 []byte) float64 {
 	if len(data1) == 0 || len(data2) == 0 {
 		return 0.0
 	}
@@ -240,7 +240,7 @@ func (m *Manager) calculateSimilarity(data1, data2 []byte) float64 {
 }
 
 // Clear 清空状态
-func (m *Manager) Clear() {
+func (m *AudioManager) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ttsOutputBuffer = m.ttsOutputBuffer[:0]
@@ -248,32 +248,8 @@ func (m *Manager) Clear() {
 }
 
 // SetEchoSuppression 设置回音抑制开关
-func (m *Manager) SetEchoSuppression(enabled bool) {
+func (m *AudioManager) SetEchoSuppression(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.echoSuppression = enabled
-}
-
-// abs 返回绝对值
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// abs64 返回绝对值
-func abs64(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// min 返回最小值
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

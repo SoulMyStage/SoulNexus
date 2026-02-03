@@ -21,3 +21,30 @@ func abs(x int) int {
 	}
 	return x
 }
+
+// float32Ptr 返回 float32 指针
+func float32Ptr(f float64) *float32 {
+	val := float32(f)
+	return &val
+}
+
+// intPtr 返回 int 指针
+func intPtr(i int) *int {
+	return &i
+}
+
+// abs64 返回绝对值
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// min 返回最小值
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

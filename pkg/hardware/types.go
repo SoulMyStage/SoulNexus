@@ -96,18 +96,6 @@ type ErrorHandler interface {
 	IsFatal(err error) bool
 }
 
-// AudioManager 音频管理器接口（解决TTS冲突）
-type AudioManager interface {
-	// ProcessInputAudio 处理输入音频（智能过滤TTS回音）
-	ProcessInputAudio(data []byte, ttsPlaying bool) ([]byte, bool)
-
-	// RecordTTSOutput 记录TTS输出音频（用于回声消除）
-	RecordTTSOutput(data []byte)
-
-	// Clear 清空状态
-	Clear()
-}
-
 // ErrorType error type enumeration
 type ErrorType int
 

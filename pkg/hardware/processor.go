@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/audio"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/speaker"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/state"
 	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
@@ -162,13 +160,13 @@ func (p *EncoderPool) Close() {
 
 // Processor 消息处理器
 type Processor struct {
-	stateManager   *state.Manager
+	stateManager   *HardwareStateManager
 	llmService     *LLMService
 	ttsService     *TTSService
 	writer         *Writer
 	errorHandler   *ErrHandler
 	filterManager  *FilterManager
-	audioManager   *audio.Manager
+	audioManager   *AudioManager
 	speakerManager *speaker.Manager // 新增：发音人管理器
 	logger         *zap.Logger
 	mu             sync.RWMutex
@@ -194,7 +192,7 @@ type Processor struct {
 
 // NewProcessor 创建消息处理器
 func NewProcessor(
-	stateManager *state.Manager,
+	stateManager *HardwareStateManager,
 	llmService *LLMService,
 	ttsService *TTSService,
 	writer *Writer,
@@ -202,7 +200,7 @@ func NewProcessor(
 	logger *zap.Logger,
 	synthesizer synthesizer.SynthesisService,
 	filterManager *FilterManager,
-	audioManager *audio.Manager,
+	audioManager *AudioManager,
 	credential *models.UserCredential,
 ) *Processor {
 	transcriberFactory := recognizer.GetGlobalFactory()

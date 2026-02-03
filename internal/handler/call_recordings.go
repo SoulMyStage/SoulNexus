@@ -4,7 +4,6 @@ import (
 	"strconv"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/conversation"
 	"github.com/code-100-precent/LingEcho/pkg/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -28,8 +27,8 @@ func NewCallRecordingHandler(db *gorm.DB) *CallRecordingHandler {
 // CallRecordingDetailResponse 详细通话记录响应
 type CallRecordingDetailResponse struct {
 	*models.CallRecording
-	ConversationDetailsData *conversation.ConversationDetails `json:"conversationDetailsData,omitempty"`
-	TimingMetricsData       *conversation.TimingMetrics       `json:"timingMetricsData,omitempty"`
+	ConversationDetailsData *models.ConversationDetails `json:"conversationDetailsData,omitempty"`
+	TimingMetricsData       *models.TimingMetrics       `json:"timingMetricsData,omitempty"`
 }
 
 // GetCallRecordings 获取通话记录列表

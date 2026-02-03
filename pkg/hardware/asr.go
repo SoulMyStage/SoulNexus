@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
-	"github.com/code-100-precent/LingEcho/pkg/hardware/reconnect"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
 	"go.uber.org/zap"
 )
@@ -19,7 +18,7 @@ type ASRService struct {
 	language     string
 	transcriber  recognizer.TranscribeService
 	errorHandler *ErrHandler
-	reconnectMgr *reconnect.Manager
+	reconnectMgr *ReconnectManager
 	logger       *zap.Logger
 	mu           sync.RWMutex
 	connected    bool
@@ -48,8 +47,8 @@ func NewASRService(
 		logger:       logger,
 	}
 	// 创建重连管理器
-	strategy := reconnect.NewExponentialBackoffStrategy()
-	reconnectMgr := reconnect.NewManager(ctx, logger, strategy)
+	strategy := NewExponentialBackoffStrategy()
+	reconnectMgr := NewManager(ctx, logger, strategy)
 	reconnectMgr.SetReconnectCallback(service.reconnect)
 	reconnectMgr.SetDisconnectCallback(service.onDisconnect)
 	service.reconnectMgr = reconnectMgr
