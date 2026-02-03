@@ -24,18 +24,16 @@ type Service struct {
 	closed       bool
 
 	// 文本分割配置
-	enableTextSplit    bool // 是否启用文本分割
-	firstSegmentMinLen int  // 第一段最小长度
-	firstSegmentMaxLen int  // 第一段最大长度
-	minSplitLength     int  // 最小分割长度
+	enableTextSplit bool    // 是否启用文本分割
+	splitRatio      float64 // 分割比例 (0.0-1.0)
+	minSplitLength  int     // 最小分割长度
 }
 
 // TextSplitConfig 文本分割配置
 type TextSplitConfig struct {
-	Enable             bool `json:"enable"`                // 是否启用文本分割
-	FirstSegmentMinLen int  `json:"first_segment_min_len"` // 第一段最小长度，默认3个字符
-	FirstSegmentMaxLen int  `json:"first_segment_max_len"` // 第一段最大长度，默认8个字符（约5个中文字）
-	MinSplitLength     int  `json:"min_split_length"`      // 总体最小分割长度，默认8个字符
+	Enable         bool    `json:"enable"`           // 是否启用文本分割
+	SplitRatio     float64 `json:"split_ratio"`      // 分割比例，默认0.5（一半一半）
+	MinSplitLength int     `json:"min_split_length"` // 最小分割长度，默认10个字符
 }
 
 // TextSegment 文本片段
@@ -56,16 +54,15 @@ func NewService(
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
-		ctx:                ctx,
-		credential:         credential,
-		speaker:            speaker,
-		synthesizer:        synthesizer,
-		errorHandler:       errorHandler,
-		logger:             logger,
-		enableTextSplit:    true, // 默认启用文本分割
-		firstSegmentMinLen: 3,    // 第一段最小3个字符
-		firstSegmentMaxLen: 5,    // 第一段最大5个字符（真正的5字策略）
-		minSplitLength:     6,    // 总体最小6个字符才分割（降低门槛）
+		ctx:             ctx,
+		credential:      credential,
+		speaker:         speaker,
+		synthesizer:     synthesizer,
+		errorHandler:    errorHandler,
+		logger:          logger,
+		enableTextSplit: true, // 默认启用文本分割
+		splitRatio:      0.5,  // 默认一半一半分割
+		minSplitLength:  15,   // 最小15个字符才分割（与configureTTSTextSplit保持一致）
 	}
 }
 
@@ -75,11 +72,8 @@ func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
 	defer s.mu.Unlock()
 
 	s.enableTextSplit = config.Enable
-	if config.FirstSegmentMinLen > 0 {
-		s.firstSegmentMinLen = config.FirstSegmentMinLen
-	}
-	if config.FirstSegmentMaxLen > 0 {
-		s.firstSegmentMaxLen = config.FirstSegmentMaxLen
+	if config.SplitRatio > 0 && config.SplitRatio <= 1.0 {
+		s.splitRatio = config.SplitRatio
 	}
 	if config.MinSplitLength > 0 {
 		s.minSplitLength = config.MinSplitLength
@@ -87,345 +81,9 @@ func (s *Service) SetTextSplitConfig(config TextSplitConfig) {
 
 	s.logger.Info("TTS文本分割配置已更新",
 		zap.Bool("enable", s.enableTextSplit),
-		zap.Int("firstSegmentMinLen", s.firstSegmentMinLen),
-		zap.Int("firstSegmentMaxLen", s.firstSegmentMaxLen),
+		zap.Float64("splitRatio", s.splitRatio),
 		zap.Int("minSplitLength", s.minSplitLength),
 	)
-}
-
-// StreamingTTSCallback 流式TTS回调函数
-type StreamingTTSCallback func(audioData []byte, isFirst bool, isLast bool, segmentIndex int) error
-
-// SynthesizeStream 流式合成语音（接收LLM流式输出）
-func (s *Service) SynthesizeStream(ctx context.Context, textChan <-chan string, callback StreamingTTSCallback) error {
-	s.mu.RLock()
-	closed := s.closed
-	synthesizer := s.synthesizer
-	enableTextSplit := s.enableTextSplit
-	s.mu.RUnlock()
-
-	if closed || synthesizer == nil {
-		s.logger.Error("TTS服务不可用")
-		return errhandler.NewRecoverableError("TTS", "服务已关闭", nil)
-	}
-
-	s.logger.Info("开始流式TTS合成")
-
-	var textBuffer strings.Builder
-	var segmentIndex int
-	var firstSegmentSent bool
-	var isFirstAudioSent bool
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Info("流式TTS合成被取消")
-			return ctx.Err()
-
-		case text, ok := <-textChan:
-			if !ok {
-				// 通道关闭，处理剩余文本
-				remaining := textBuffer.String()
-				s.logger.Info("LLM流式输出完成，处理剩余文本",
-					zap.String("remaining", remaining),
-					zap.Int("remainingLen", len([]rune(remaining))),
-					zap.Int("segmentIndex", segmentIndex),
-					zap.Bool("firstSegmentSent", firstSegmentSent),
-				)
-
-				if remaining != "" {
-					// 处理最后的剩余文本
-					remainingRunes := []rune(strings.TrimSpace(remaining))
-					if len(remainingRunes) >= 2 { // 至少2个字符才值得合成
-						s.logger.Info("处理最后剩余文本", zap.String("text", remaining))
-						s.synthesizeTextSegmentSync(ctx, remaining, segmentIndex, true, !firstSegmentSent, callback, &isFirstAudioSent)
-					} else {
-						s.logger.Info("剩余文本太短，忽略", zap.String("remaining", remaining))
-						// 如果没有剩余文本需要合成，直接发送结束信号
-						if isFirstAudioSent {
-							callback([]byte{}, false, true, segmentIndex)
-						}
-					}
-				} else {
-					// 没有剩余文本，发送结束信号
-					if isFirstAudioSent {
-						callback([]byte{}, false, true, segmentIndex)
-					}
-				}
-
-				s.logger.Info("流式TTS合成完成")
-				return nil
-			}
-
-			if text == "" {
-				continue
-			}
-
-			// 将新文本添加到缓冲区
-			textBuffer.WriteString(text)
-			currentText := textBuffer.String()
-
-			s.logger.Debug("收到流式文本",
-				zap.String("newText", text),
-				zap.String("currentBuffer", currentText),
-				zap.Int("bufferLen", len([]rune(currentText))),
-			)
-
-			// 立即检查是否可以提取第一段进行合成
-			if !firstSegmentSent && enableTextSplit {
-				if segment := s.tryExtractFirstSegmentAggressive(currentText); segment != "" {
-					s.logger.Info("立即提取第一段进行合成",
-						zap.String("segment", segment),
-						zap.Int("segmentLen", len([]rune(segment))),
-					)
-
-					// 立即合成第一段（同步）
-					s.synthesizeTextSegmentSync(ctx, segment, segmentIndex, false, true, callback, &isFirstAudioSent)
-
-					// 从缓冲区移除已处理的文本
-					remaining := strings.TrimSpace(currentText[len(segment):])
-					textBuffer.Reset()
-					textBuffer.WriteString(remaining)
-
-					segmentIndex++
-					firstSegmentSent = true
-				}
-			}
-
-			// 检查是否有完整的句子可以合成（第一段之后）
-			if firstSegmentSent {
-				currentBuffer := textBuffer.String()
-				if segment := s.tryExtractCompleteSentence(currentBuffer); segment != "" {
-					s.logger.Info("提取完整句子进行合成",
-						zap.String("segment", segment),
-						zap.Int("segmentLen", len([]rune(segment))),
-					)
-
-					// 合成句子（同步）
-					s.synthesizeTextSegmentSync(ctx, segment, segmentIndex, false, false, callback, &isFirstAudioSent)
-
-					// 从缓冲区移除已处理的文本
-					remaining := strings.TrimSpace(currentBuffer[len(segment):])
-					textBuffer.Reset()
-					textBuffer.WriteString(remaining)
-
-					segmentIndex++
-				}
-			}
-		}
-	}
-}
-
-// synthesizeTextSegmentSync 同步合成文本片段（用于流式TTS）
-func (s *Service) synthesizeTextSegmentSync(ctx context.Context, text string, segmentIndex int, isLast bool, isFirst bool, callback StreamingTTSCallback, isFirstAudioSent *bool) {
-	if text == "" {
-		return
-	}
-
-	s.logger.Info("开始同步合成文本片段",
-		zap.String("text", text),
-		zap.Int("segmentIndex", segmentIndex),
-		zap.Bool("isFirst", isFirst),
-		zap.Bool("isLast", isLast),
-	)
-
-	// 创建片段处理器
-	handler := &streamingSyncSegmentHandler{
-		callback:         callback,
-		ctx:              ctx,
-		logger:           s.logger,
-		text:             text,
-		segmentIndex:     segmentIndex,
-		isFirst:          isFirst,
-		isLast:           isLast,
-		isFirstAudioSent: isFirstAudioSent,
-	}
-
-	// 合成当前片段
-	err := s.synthesizer.Synthesize(ctx, handler, text)
-	if err != nil {
-		classified := s.errorHandler.Classify(err, "TTS")
-		s.logger.Error("同步TTS片段合成失败",
-			zap.Error(classified),
-			zap.Int("segmentIndex", segmentIndex),
-			zap.String("text", text),
-		)
-		return
-	}
-
-	s.logger.Info("同步文本片段合成完成",
-		zap.Int("segmentIndex", segmentIndex),
-		zap.String("text", text),
-	)
-}
-
-// streamingSyncSegmentHandler 流式同步片段处理器
-type streamingSyncSegmentHandler struct {
-	callback         StreamingTTSCallback
-	ctx              context.Context
-	logger           *zap.Logger
-	text             string
-	segmentIndex     int
-	isFirst          bool
-	isLast           bool
-	isFirstAudioSent *bool
-	chunkCount       int
-	totalBytes       int
-}
-
-func (h *streamingSyncSegmentHandler) OnMessage(data []byte) {
-	h.chunkCount++
-	if len(data) > 0 {
-		h.totalBytes += len(data)
-
-		// 每10个chunk记录一次进度
-		if h.chunkCount%10 == 1 {
-			h.logger.Debug("流式TTS音频数据接收中",
-				zap.Int("segmentIndex", h.segmentIndex),
-				zap.Int("chunkCount", h.chunkCount),
-				zap.Int("chunkSize", len(data)),
-				zap.Int("totalBytes", h.totalBytes),
-				zap.Bool("isFirst", h.isFirst),
-			)
-		}
-	}
-
-	select {
-	case <-h.ctx.Done():
-		// Context已取消，不再发送数据
-		return
-	default:
-		// 调用回调函数发送音频数据
-		// isFirst: 第一个片段的第一个chunk
-		// isLast: 最后一个片段且数据为空（TTS结束信号）
-		isFirstChunk := h.isFirst && h.chunkCount == 1 && !*h.isFirstAudioSent
-		if isFirstChunk {
-			*h.isFirstAudioSent = true
-		}
-		isLastChunk := h.isLast && len(data) == 0
-
-		if err := h.callback(data, isFirstChunk, isLastChunk, h.segmentIndex); err != nil {
-			h.logger.Warn("流式TTS回调失败",
-				zap.Error(err),
-				zap.Int("segmentIndex", h.segmentIndex),
-				zap.Int("chunkSize", len(data)),
-			)
-		}
-	}
-}
-
-func (h *streamingSyncSegmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
-	// 暂时不处理时间戳
-}
-
-// tryExtractFirstSegmentAggressive 更激进的第一段提取策略（立即响应）
-func (s *Service) tryExtractFirstSegmentAggressive(text string) string {
-	s.mu.RLock()
-	firstSegmentMinLen := s.firstSegmentMinLen
-	firstSegmentMaxLen := s.firstSegmentMaxLen
-	s.mu.RUnlock()
-
-	textRunes := []rune(strings.TrimSpace(text))
-	textLength := len(textRunes)
-
-	// 超激进：只要达到最小长度就开始寻找分割点
-	if textLength < firstSegmentMinLen {
-		return "" // 文本太短，等待更多内容
-	}
-
-	// 第一段分割符（优先使用弱分割符，更容易触发）
-	weakSeparators := []rune{'，', ',', '、', '；', ';', '：', ':'}
-	strongSeparators := []rune{'。', '！', '？', '.', '!', '?', '\n'}
-
-	// 超激进策略1：在最小长度处立即寻找弱分割符
-	for i := firstSegmentMinLen; i <= min(textLength, firstSegmentMaxLen); i++ {
-		if i >= textLength {
-			break
-		}
-
-		char := textRunes[i-1] // 检查当前位置的字符
-
-		// 优先检查弱分割符
-		for _, sep := range weakSeparators {
-			if char == sep {
-				segment := strings.TrimSpace(string(textRunes[:i]))
-				if len([]rune(segment)) >= firstSegmentMinLen {
-					return segment
-				}
-			}
-		}
-	}
-
-	// 超激进策略2：检查强分割符
-	for i := firstSegmentMinLen; i <= min(textLength, firstSegmentMaxLen); i++ {
-		if i >= textLength {
-			break
-		}
-
-		char := textRunes[i-1]
-		for _, sep := range strongSeparators {
-			if char == sep {
-				segment := strings.TrimSpace(string(textRunes[:i]))
-				if len([]rune(segment)) >= firstSegmentMinLen {
-					return segment
-				}
-			}
-		}
-	}
-
-	// 超激进策略3：如果文本已经比较长，在空格处分割
-	if textLength >= firstSegmentMaxLen {
-		for i := firstSegmentMaxLen; i >= firstSegmentMinLen; i-- {
-			if i < textLength && unicode.IsSpace(textRunes[i]) {
-				return strings.TrimSpace(string(textRunes[:i]))
-			}
-		}
-		// 最激进：强制在最大长度处分割
-		return strings.TrimSpace(string(textRunes[:firstSegmentMaxLen]))
-	}
-
-	return "" // 等待更多内容
-}
-
-// tryExtractCompleteSentence 尝试提取完整句子
-func (s *Service) tryExtractCompleteSentence(text string) string {
-	textRunes := []rune(strings.TrimSpace(text))
-	textLength := len(textRunes)
-
-	if textLength < 3 { // 最小长度要求
-		return "" // 文本太短
-	}
-
-	// 句子结束符（扩展列表，包含中文常用符号）
-	sentenceEnders := []rune{'。', '！', '？', '.', '!', '?', '，', ',', '；', ';', '：', ':'}
-
-	// 寻找句子结束符（从第3个字符开始）
-	for i := 3; i < textLength; i++ {
-		char := textRunes[i]
-		for _, ender := range sentenceEnders {
-			if char == ender {
-				sentence := strings.TrimSpace(string(textRunes[:i+1]))
-				if len([]rune(sentence)) >= 3 {
-					return sentence
-				}
-			}
-		}
-	}
-
-	// 如果文本较长但没有结束符，按长度分割
-	if textLength > 15 {
-		// 寻找逗号或分号进行分割
-		for i := 8; i < textLength && i < 15; i++ {
-			char := textRunes[i]
-			if char == '，' || char == ',' || char == '；' || char == ';' || char == '：' || char == ':' {
-				return strings.TrimSpace(string(textRunes[:i+1]))
-			}
-		}
-		// 强制分割
-		return strings.TrimSpace(string(textRunes[:15]))
-	}
-
-	return "" // 文本太短，等待更多内容
 }
 
 // Synthesize 合成语音
@@ -725,11 +383,10 @@ func (h *segmentHandler) OnTimestamp(timestamp synthesizer.SentenceTimestamp) {
 	// 暂时不处理时间戳
 }
 
-// splitText 智能分割文本（第一段最小化策略）
+// splitText 智能分割文本
 func (s *Service) splitText(text string) []TextSegment {
 	s.mu.RLock()
-	firstSegmentMinLen := s.firstSegmentMinLen
-	firstSegmentMaxLen := s.firstSegmentMaxLen
+	splitRatio := s.splitRatio
 	minSplitLength := s.minSplitLength
 	s.mu.RUnlock()
 
@@ -747,13 +404,17 @@ func (s *Service) splitText(text string) []TextSegment {
 		}
 	}
 
+	// 计算分割点
 	textRunes := []rune(text)
 	textLength := len(textRunes)
 
-	// 第一段最小化分割策略
-	firstSegmentEnd := s.findFirstSegmentEnd(textRunes, firstSegmentMinLen, firstSegmentMaxLen)
+	// 根据比例计算初始分割点
+	initialSplitPoint := int(float64(textLength) * splitRatio)
 
-	if firstSegmentEnd <= 0 || firstSegmentEnd >= textLength {
+	// 智能调整分割点，寻找合适的断句位置
+	splitPoint := s.findBestSplitPoint(textRunes, initialSplitPoint)
+
+	if splitPoint <= 0 || splitPoint >= textLength {
 		// 找不到合适的分割点，不分割
 		return []TextSegment{
 			{
@@ -766,11 +427,11 @@ func (s *Service) splitText(text string) []TextSegment {
 	}
 
 	// 分割文本
-	firstPart := strings.TrimSpace(string(textRunes[:firstSegmentEnd]))
-	remainingPart := strings.TrimSpace(string(textRunes[firstSegmentEnd:]))
+	firstPart := strings.TrimSpace(string(textRunes[:splitPoint]))
+	secondPart := strings.TrimSpace(string(textRunes[splitPoint:]))
 
-	// 检查分割后的部分是否有效
-	if len(firstPart) < 2 || len(remainingPart) < 2 {
+	// 检查分割后的部分是否太短
+	if len(firstPart) < 3 || len(secondPart) < 3 {
 		// 分割后的部分太短，不分割
 		return []TextSegment{
 			{
@@ -782,199 +443,103 @@ func (s *Service) splitText(text string) []TextSegment {
 		}
 	}
 
-	s.logger.Info("TTS文本分割完成（第一段最小化）",
+	s.logger.Info("文本分割完成",
 		zap.String("originalText", text),
 		zap.String("firstPart", firstPart),
-		zap.String("remainingPart", remainingPart),
-		zap.Int("firstPartLen", len([]rune(firstPart))),
-		zap.Int("remainingPartLen", len([]rune(remainingPart))),
+		zap.String("secondPart", secondPart),
+		zap.Int("splitPoint", splitPoint),
+		zap.Float64("actualRatio", float64(splitPoint)/float64(textLength)),
 	)
 
-	// 检查剩余部分是否需要进一步分割
-	segments := []TextSegment{
+	return []TextSegment{
 		{
 			Text:     firstPart,
 			Index:    0,
 			IsLast:   false,
 			Priority: 0, // 第一部分优先级最高
 		},
-	}
-
-	// 对剩余部分进行进一步分割（如果需要）
-	remainingSegments := s.splitRemainingText(remainingPart, 1)
-	segments = append(segments, remainingSegments...)
-
-	return segments
-}
-
-// findFirstSegmentEnd 寻找第一段的结束位置（最小化策略）
-func (s *Service) findFirstSegmentEnd(textRunes []rune, minLen, maxLen int) int {
-	textLength := len(textRunes)
-
-	// 确保不超过文本长度
-	if maxLen > textLength {
-		maxLen = textLength
-	}
-	if minLen > textLength {
-		minLen = textLength
-	}
-
-	// 第一段分割符优先级（优先使用弱分割符，实现最小化）
-	firstSegmentSeparators := []struct {
-		chars    []rune
-		priority int
-	}{
-		// 最高优先级：逗号、顿号（实现最小化分割）
-		{[]rune{'，', ',', '、'}, 1},
-		// 中等优先级：分号、冒号
-		{[]rune{'；', ';', '：', ':'}, 2},
-		// 较低优先级：句号、感叹号、问号（避免过早结束）
-		{[]rune{'。', '！', '？', '.', '!', '?'}, 3},
-		// 最低优先级：换行符
-		{[]rune{'\n'}, 4},
-	}
-
-	bestEnd := -1
-	bestPriority := 999
-
-	// 在最小长度到最大长度范围内寻找分割点
-	for i := minLen; i <= maxLen && i < textLength; i++ {
-		char := textRunes[i]
-
-		for _, sep := range firstSegmentSeparators {
-			for _, sepChar := range sep.chars {
-				if char == sepChar {
-					// 计算距离权重（越靠近最小长度越好）
-					distanceFromMin := i - minLen
-					adjustedPriority := sep.priority + distanceFromMin/5 // 距离权重较小
-
-					if adjustedPriority < bestPriority {
-						bestPriority = adjustedPriority
-						bestEnd = i + 1 // 在分割符后分割
-					}
-				}
-			}
-		}
-	}
-
-	// 如果找到了分割符，使用它
-	if bestEnd > 0 {
-		return bestEnd
-	}
-
-	// 没找到分割符，寻找空格（在最小长度附近）
-	for i := minLen; i <= maxLen && i < textLength; i++ {
-		if unicode.IsSpace(textRunes[i]) {
-			return i + 1 // 在空格后分割
-		}
-	}
-
-	// 都没找到，使用最大长度作为分割点
-	if maxLen < textLength {
-		return maxLen
-	}
-
-	return -1 // 无法分割
-}
-
-// splitRemainingText 分割剩余文本（使用传统策略）
-func (s *Service) splitRemainingText(text string, startIndex int) []TextSegment {
-	// 对于剩余部分，使用传统的完整句子分割策略
-	textRunes := []rune(text)
-	textLength := len(textRunes)
-
-	// 如果剩余文本较短，直接返回
-	if textLength < 30 { // 剩余部分小于30个字符，不再分割
-		return []TextSegment{
-			{
-				Text:     text,
-				Index:    startIndex,
-				IsLast:   true,
-				Priority: startIndex,
-			},
-		}
-	}
-
-	// 寻找完整句子的分割点
-	sentenceEnd := s.findSentenceEnd(textRunes, textLength/2) // 在中间位置寻找句子结束
-
-	if sentenceEnd > 0 && sentenceEnd < textLength {
-		firstPart := strings.TrimSpace(string(textRunes[:sentenceEnd]))
-		secondPart := strings.TrimSpace(string(textRunes[sentenceEnd:]))
-
-		if len(firstPart) >= 5 && len(secondPart) >= 5 {
-			return []TextSegment{
-				{
-					Text:     firstPart,
-					Index:    startIndex,
-					IsLast:   false,
-					Priority: startIndex,
-				},
-				{
-					Text:     secondPart,
-					Index:    startIndex + 1,
-					IsLast:   true,
-					Priority: startIndex + 1,
-				},
-			}
-		}
-	}
-
-	// 无法进一步分割，返回整个剩余部分
-	return []TextSegment{
 		{
-			Text:     text,
-			Index:    startIndex,
+			Text:     secondPart,
+			Index:    1,
 			IsLast:   true,
-			Priority: startIndex,
+			Priority: 1, // 第二部分优先级较低
 		},
 	}
 }
 
-// findSentenceEnd 寻找句子结束位置（用于剩余文本分割）
-func (s *Service) findSentenceEnd(textRunes []rune, preferredPos int) int {
+// findBestSplitPoint 寻找最佳分割点
+func (s *Service) findBestSplitPoint(textRunes []rune, initialPoint int) int {
 	textLength := len(textRunes)
-	searchRange := textLength / 4 // 搜索范围为文本长度的1/4
 
-	minPos := preferredPos - searchRange
-	maxPos := preferredPos + searchRange
-
-	if minPos < 0 {
-		minPos = 0
+	// 定义断句标点符号的优先级（数字越小优先级越高）
+	punctuationPriority := map[rune]int{
+		'。': 1, '！': 1, '？': 1, // 句号、感叹号、问号 - 最高优先级
+		'.': 1, '!': 1, '?': 1, // 英文句号、感叹号、问号
+		'；': 2, ';': 2, // 分号 - 高优先级
+		'，': 3, ',': 3, // 逗号 - 中等优先级
+		'：': 4, ':': 4, // 冒号 - 较低优先级
+		'、': 5, // 顿号 - 低优先级
 	}
-	if maxPos >= textLength {
-		maxPos = textLength - 1
+
+	// 搜索范围：初始点前后20%的范围
+	searchRange := textLength / 5
+	if searchRange < 5 {
+		searchRange = 5
 	}
 
-	// 句子结束符（强分割符）
-	sentenceEnders := []rune{'。', '！', '？', '.', '!', '?'}
+	minPoint := initialPoint - searchRange
+	maxPoint := initialPoint + searchRange
 
-	bestPos := -1
-	bestDistance := textLength
+	if minPoint < 0 {
+		minPoint = 0
+	}
+	if maxPoint >= textLength {
+		maxPoint = textLength - 1
+	}
 
-	// 寻找最接近首选位置的句子结束符
-	for i := minPos; i <= maxPos; i++ {
+	bestPoint := initialPoint
+	bestPriority := 999 // 最低优先级
+
+	// 在搜索范围内寻找最佳断句点
+	for i := minPoint; i <= maxPoint; i++ {
+		if i >= textLength {
+			break
+		}
+
 		char := textRunes[i]
-		for _, ender := range sentenceEnders {
-			if char == ender {
-				distance := abs(i - preferredPos)
-				if distance < bestDistance {
-					bestDistance = distance
-					bestPos = i + 1 // 在句子结束符后分割
-				}
+		if priority, exists := punctuationPriority[char]; exists {
+			// 计算距离初始点的权重（距离越近越好）
+			distance := abs(i - initialPoint)
+			adjustedPriority := priority + distance/10 // 距离权重
+
+			if adjustedPriority < bestPriority {
+				bestPriority = adjustedPriority
+				bestPoint = i + 1 // 在标点符号后分割
 			}
 		}
 	}
 
-	return bestPos
-}
-
-// min 辅助函数
-func min(a, b int) int {
-	if a < b {
-		return a
+	// 如果找到了标点符号，使用它；否则寻找空格
+	if bestPriority < 999 {
+		return bestPoint
 	}
-	return b
+
+	// 没找到标点符号，寻找空格或其他空白字符
+	for i := minPoint; i <= maxPoint; i++ {
+		if i >= textLength {
+			break
+		}
+
+		char := textRunes[i]
+		if unicode.IsSpace(char) {
+			distance := abs(i - initialPoint)
+			if distance < abs(bestPoint-initialPoint) {
+				bestPoint = i + 1 // 在空格后分割
+			}
+		}
+	}
+
+	return bestPoint
 }
 
 // abs 计算绝对值
@@ -1002,8 +567,7 @@ func (s *Service) UpdateSpeaker(speakerID string, synthesizer synthesizer.Synthe
 	s.logger.Info("TTS发音人已更新",
 		zap.String("speakerID", speakerID),
 		zap.Bool("enableTextSplit", s.enableTextSplit),
-		zap.Int("firstSegmentMinLen", s.firstSegmentMinLen),
-		zap.Int("firstSegmentMaxLen", s.firstSegmentMaxLen),
+		zap.Float64("splitRatio", s.splitRatio),
 		zap.Int("minSplitLength", s.minSplitLength),
 	)
 }
