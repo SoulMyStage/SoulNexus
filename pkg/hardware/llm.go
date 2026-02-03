@@ -480,8 +480,6 @@ func (s *LLMService) registerSpeakerSwitchTool() {
 		)
 		return
 	}
-
-	// 从配置中获取支持的发音人类型
 	supportedTypes := s.speakerConfig.GetAllSpeakerTypes()
 
 	s.logger.Info("准备注册发音人切换工具",

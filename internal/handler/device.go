@@ -993,7 +993,7 @@ func (h *Handlers) AnalyzeCallRecording(c *gin.Context) {
 	forceAnalyze := c.Query("force") == "true"
 
 	// 创建分析服务
-	analysisService := hardware.NewAnalysisService(h.db)
+	analysisService := hardware.NewAnalysisService(h.db, logger.Lg)
 
 	// 执行分析
 	if err := analysisService.AnalyzeCallRecording(c.Request.Context(), uint(recordingID), forceAnalyze); err != nil {
@@ -1030,7 +1030,7 @@ func (h *Handlers) BatchAnalyzeCallRecordings(c *gin.Context) {
 	}
 
 	// 创建分析服务
-	analysisService := hardware.NewAnalysisService(h.db)
+	analysisService := hardware.NewAnalysisService(h.db, logger.Lg)
 
 	// 执行批量分析
 	if err := analysisService.BatchAnalyzeRecordings(c.Request.Context(), user.ID, req.AssistantID, req.Limit); err != nil {

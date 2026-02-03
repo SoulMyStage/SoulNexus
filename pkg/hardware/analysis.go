@@ -13,151 +13,112 @@ import (
 	"gorm.io/gorm"
 )
 
-// AnalysisService AI分析服务
+// AnalysisService ai analysis service
 type AnalysisService struct {
 	db     *gorm.DB
 	logger *zap.Logger
 }
 
-// NewAnalysisService 创建AI分析服务
-func NewAnalysisService(db *gorm.DB) *AnalysisService {
+// NewAnalysisService create ai service
+func NewAnalysisService(db *gorm.DB, logger *zap.Logger) *AnalysisService {
+	if logger == nil {
+		logger = zap.L()
+	}
 	return &AnalysisService{
 		db:     db,
-		logger: zap.L(), // 使用全局logger
+		logger: logger,
 	}
 }
 
-// AnalysisResult AI分析结果
+// AnalysisResult analysis result
 type AnalysisResult struct {
-	Summary           string   `json:"summary"`           // 对话摘要
-	Keywords          []string `json:"keywords"`          // 关键词
-	Tags              []string `json:"tags"`              // 标签
-	Category          string   `json:"category"`          // 分类
-	IsImportant       bool     `json:"isImportant"`       // 是否重要
-	SentimentScore    float64  `json:"sentimentScore"`    // 情感分数 (-1到1)
-	SatisfactionScore float64  `json:"satisfactionScore"` // 满意度分数 (0到1)
-	ActionItems       []string `json:"actionItems"`       // 行动项
-	Issues            []string `json:"issues"`            // 问题点
-	Insights          string   `json:"insights"`          // 洞察分析
+	Summary           string   `json:"summary"`           // recording summary
+	Keywords          []string `json:"keywords"`          // keywords
+	Tags              []string `json:"tags"`              // tags
+	Category          string   `json:"category"`          // category
+	IsImportant       bool     `json:"isImportant"`       // is important
+	SentimentScore    float64  `json:"sentimentScore"`    // SentimentScore (-1-1)
+	SatisfactionScore float64  `json:"satisfactionScore"` // Satisfy (0-1)
+	ActionItems       []string `json:"actionItems"`       // action items
+	Issues            []string `json:"issues"`            // issues
+	Insights          string   `json:"insights"`          // insights
 }
 
-// AnalyzeCallRecording 分析通话录音
+// AnalyzeCallRecording analysis call recording
 func (s *AnalysisService) AnalyzeCallRecording(ctx context.Context, recordingID uint, forceAnalyze bool) error {
-	// 获取录音记录
 	var recording models.CallRecording
 	if err := s.db.First(&recording, recordingID).Error; err != nil {
 		return fmt.Errorf("获取录音记录失败: %w", err)
 	}
-
-	// 检查是否需要分析
 	if !forceAnalyze && recording.AnalysisStatus == "completed" {
-		s.logger.Info("录音已分析完成，跳过", zap.Uint("recordingID", recordingID))
+		s.logger.Info(fmt.Sprintf("%d 录音已分析完成，跳过", recording))
 		return nil
 	}
-
-	// 更新分析状态为进行中
 	if err := s.updateAnalysisStatus(recordingID, "analyzing", ""); err != nil {
 		return fmt.Errorf("更新分析状态失败: %w", err)
 	}
-
-	// 获取助手信息
 	var assistant models.Assistant
 	if err := s.db.First(&assistant, recording.AssistantID).Error; err != nil {
-		s.updateAnalysisStatus(recordingID, "failed", "获取助手信息失败")
-		return fmt.Errorf("获取助手信息失败: %w", err)
+		return s.updateAnalysisStatus(recordingID, "failed", "获取助手信息失败")
 	}
-
-	// 检查助手是否配置了API凭证
 	if assistant.ApiKey == "" || assistant.ApiSecret == "" {
-		s.updateAnalysisStatus(recordingID, "failed", "助手未配置API凭证")
-		return fmt.Errorf("助手未配置API凭证")
-	}
 
-	// 创建LLM提供者
+		return s.updateAnalysisStatus(recordingID, "failed", "助手未配置API凭证")
+	}
 	provider, err := s.createLLMProvider(&assistant)
 	if err != nil {
-		s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("创建LLM提供者失败: %v", err))
-		return fmt.Errorf("创建LLM提供者失败: %w", err)
+		return s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("创建LLM提供者失败: %v", err))
 	}
 	defer provider.Hangup()
-
-	// 执行AI分析
-	result, err := s.performAnalysis(ctx, provider, &recording, &assistant)
+	result, err := s.performAnalysis(provider, &recording, &assistant)
 	if err != nil {
-		s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("AI分析失败: %v", err))
-		return fmt.Errorf("AI分析失败: %w", err)
+		return s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("AI分析失败: %v", err))
 	}
-
-	// 保存分析结果
 	if err := s.saveAnalysisResult(recordingID, result); err != nil {
-		s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("保存分析结果失败: %v", err))
-		return fmt.Errorf("保存分析结果失败: %w", err)
+		return s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("保存分析结果失败: %v", err))
 	}
-
-	s.logger.Info("通话录音分析完成",
-		zap.Uint("recordingID", recordingID),
-		zap.String("category", result.Category),
-		zap.Bool("isImportant", result.IsImportant),
-	)
-
+	s.logger.Info(fmt.Sprintf("%d 通话录音分析完成，种类: %s 是否重要 %v", recordingID, result.Category, recording.IsImportant))
 	return nil
 }
 
 // createLLMProvider 创建LLM提供者
 func (s *AnalysisService) createLLMProvider(assistant *models.Assistant) (llm.LLMProvider, error) {
-	// 创建用户凭证
-	credential := &models.UserCredential{
-		APIKey:      assistant.ApiKey,
-		APISecret:   assistant.ApiSecret,
-		LLMProvider: "openai", // 默认使用OpenAI兼容的API
-		LLMApiKey:   assistant.ApiKey,
-		LLMApiURL:   "https://api.openai.com/v1", // 可以根据需要配置
+	credential, err := models.GetUserCredentialByApiSecretAndApiKey(s.db, assistant.ApiKey, assistant.ApiSecret)
+	if err != nil {
+		return nil, fmt.Errorf("获取凭证失败: %w", err)
 	}
-
-	// 根据助手配置创建LLM提供者
 	provider, err := llm.NewLLMProvider(context.Background(), credential, "")
 	if err != nil {
 		return nil, fmt.Errorf("创建LLM提供者失败: %w", err)
 	}
-
 	return provider, nil
 }
 
 // performAnalysis 执行AI分析
-func (s *AnalysisService) performAnalysis(ctx context.Context, provider llm.LLMProvider, recording *models.CallRecording, assistant *models.Assistant) (*AnalysisResult, error) {
-	// 构建分析提示词
+func (s *AnalysisService) performAnalysis(provider llm.LLMProvider, recording *models.CallRecording, assistant *models.Assistant) (*AnalysisResult, error) {
 	prompt := s.buildAnalysisPrompt(recording)
-
-	// 设置系统提示词
 	systemPrompt := s.buildSystemPrompt()
 	provider.SetSystemPrompt(systemPrompt)
-
-	// 执行查询
 	options := llm.QueryOptions{
 		Model:       assistant.LLMModel,
-		MaxTokens:   intPtr(2000),    // 分析结果需要更多token
-		Temperature: float32Ptr(0.3), // 较低的温度确保分析结果稳定
+		MaxTokens:   intPtr(2000),
+		Temperature: float32Ptr(0.3),
 		Stream:      false,
 	}
-
 	response, err := provider.QueryWithOptions(prompt, options)
 	if err != nil {
 		return nil, fmt.Errorf("LLM查询失败: %w", err)
 	}
-
-	// 解析分析结果
 	result, err := s.parseAnalysisResponse(response)
 	if err != nil {
 		return nil, fmt.Errorf("解析分析结果失败: %w", err)
 	}
-
 	return result, nil
 }
 
 // buildSystemPrompt 构建系统提示词
 func (s *AnalysisService) buildSystemPrompt() string {
 	return `你是一个专业的通话录音分析助手。你的任务是分析用户与AI助手的对话内容，提供深入的洞察和有价值的分析。
-
 请按照以下JSON格式返回分析结果：
 
 {
@@ -191,58 +152,43 @@ func (s *AnalysisService) buildSystemPrompt() string {
 // buildAnalysisPrompt 构建分析提示词
 func (s *AnalysisService) buildAnalysisPrompt(recording *models.CallRecording) string {
 	var prompt strings.Builder
-
 	prompt.WriteString("请分析以下通话录音内容：\n\n")
 	prompt.WriteString(fmt.Sprintf("通话时长: %d秒\n", recording.Duration))
 	prompt.WriteString(fmt.Sprintf("通话类型: %s\n", recording.CallType))
 	prompt.WriteString(fmt.Sprintf("通话状态: %s\n", recording.CallStatus))
 	prompt.WriteString("\n")
-
 	if recording.UserInput != "" {
 		prompt.WriteString("用户输入:\n")
 		prompt.WriteString(recording.UserInput)
 		prompt.WriteString("\n\n")
 	}
-
 	if recording.AIResponse != "" {
 		prompt.WriteString("AI回复:\n")
 		prompt.WriteString(recording.AIResponse)
 		prompt.WriteString("\n\n")
 	}
-
-	// 如果有现有摘要，也包含进来
 	if recording.Summary != "" {
 		prompt.WriteString("现有摘要:\n")
 		prompt.WriteString(recording.Summary)
 		prompt.WriteString("\n\n")
 	}
-
 	prompt.WriteString("请基于以上内容进行深度分析，返回JSON格式的分析结果。")
-
 	return prompt.String()
 }
 
 // parseAnalysisResponse 解析分析响应
 func (s *AnalysisService) parseAnalysisResponse(response string) (*AnalysisResult, error) {
-	// 清理响应，提取JSON部分
 	response = strings.TrimSpace(response)
-
-	// 查找JSON开始和结束位置
 	start := strings.Index(response, "{")
 	end := strings.LastIndex(response, "}")
-
 	if start == -1 || end == -1 || start >= end {
 		return nil, fmt.Errorf("响应中未找到有效的JSON格式")
 	}
-
 	jsonStr := response[start : end+1]
-
 	var result AnalysisResult
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		return nil, fmt.Errorf("JSON解析失败: %w", err)
 	}
-
-	// 验证必要字段
 	if result.Summary == "" {
 		result.Summary = "无法生成摘要"
 	}
@@ -252,25 +198,18 @@ func (s *AnalysisService) parseAnalysisResponse(response string) (*AnalysisResul
 	if len(result.Keywords) == 0 {
 		result.Keywords = []string{"通话"}
 	}
-
 	return &result, nil
 }
 
 // saveAnalysisResult 保存分析结果
 func (s *AnalysisService) saveAnalysisResult(recordingID uint, result *AnalysisResult) error {
-	// 序列化结果
 	analysisJSON, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("序列化分析结果失败: %w", err)
 	}
-
-	// 序列化关键词和标签
 	keywordsJSON, _ := json.Marshal(result.Keywords)
 	tagsJSON, _ := json.Marshal(result.Tags)
-
 	now := time.Now()
-
-	// 更新录音记录
 	updates := map[string]interface{}{
 		"ai_analysis":     string(analysisJSON),
 		"analysis_status": "completed",
@@ -282,7 +221,6 @@ func (s *AnalysisService) saveAnalysisResult(recordingID uint, result *AnalysisR
 		"category":        result.Category,
 		"is_important":    result.IsImportant,
 	}
-
 	return s.db.Model(&models.CallRecording{}).Where("id = ?", recordingID).Updates(updates).Error
 }
 
@@ -305,7 +243,6 @@ func (s *AnalysisService) updateAnalysisStatus(recordingID uint, status, errorMs
 
 // AutoAnalyzeRecording 自动分析录音（在录音创建后调用）
 func (s *AnalysisService) AutoAnalyzeRecording(ctx context.Context, recordingID uint) {
-	// 在后台goroutine中执行分析，避免阻塞主流程
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -315,20 +252,14 @@ func (s *AnalysisService) AutoAnalyzeRecording(ctx context.Context, recordingID 
 				)
 			}
 		}()
-
-		// 等待一小段时间，确保录音记录完全保存
 		time.Sleep(2 * time.Second)
-
 		if err := s.AnalyzeCallRecording(ctx, recordingID, false); err != nil {
 			s.logger.Error("自动分析录音失败",
 				zap.Uint("recordingID", recordingID),
 				zap.Error(err),
 			)
-
-			// 如果自动分析失败，标记为需要手动分析
 			s.updateAnalysisStatus(recordingID, "failed", fmt.Sprintf("自动分析失败: %v", err))
 		} else {
-			// 标记为自动分析完成
 			s.db.Model(&models.CallRecording{}).Where("id = ?", recordingID).Update("auto_analyzed", true)
 		}
 	}()
@@ -360,8 +291,6 @@ func (s *AnalysisService) BatchAnalyzeRecordings(ctx context.Context, userID uin
 			)
 			continue
 		}
-
-		// 避免频繁调用API
 		time.Sleep(1 * time.Second)
 	}
 

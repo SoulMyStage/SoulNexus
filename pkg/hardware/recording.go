@@ -38,8 +38,8 @@ func NewRecordingManager(db *gorm.DB, logger *zap.Logger, storagePath string) *R
 		maxFileSize:     100 * 1024 * 1024, // 100MB
 		maxDuration:     3600,              // 1小时
 		enableCleanup:   true,
-		retentionDays:   30,                     // 保留30天
-		analysisService: NewAnalysisService(db), // 初始化AI分析服务
+		retentionDays:   30,                             // 保留30天
+		analysisService: NewAnalysisService(db, logger), // 初始化AI分析服务
 	}
 }
 
