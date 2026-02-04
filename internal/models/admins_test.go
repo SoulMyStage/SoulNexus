@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho"
-	"github.com/code-100-precent/LingEcho/pkg/config"
 	"github.com/code-100-precent/LingEcho/pkg/constants"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -323,54 +322,7 @@ func TestFormatAsInt64(t *testing.T) {
 	}
 }
 
-// TestConvertValue is tested below with actual reflection types
-
-func TestAdminObject_BuildPermissions(t *testing.T) {
-	db := setupAdminsTestDB(t)
-
-	superUser := &User{
-		Role: RoleSuperAdmin,
-	}
-
-	regularUser := &User{
-		Role: RoleUser,
-	}
-
-	obj := AdminObject{
-		Model: &User{},
-	}
-
-	// Test super user
-	obj.BuildPermissions(db, superUser)
-	assert.True(t, obj.Permissions["can_create"])
-	assert.True(t, obj.Permissions["can_update"])
-	assert.True(t, obj.Permissions["can_delete"])
-	assert.True(t, obj.Permissions["can_action"])
-
-	// Test regular user (should not have permissions by default)
-	obj.BuildPermissions(db, regularUser)
-	assert.False(t, obj.Permissions["can_create"])
-	assert.False(t, obj.Permissions["can_update"])
-	assert.False(t, obj.Permissions["can_delete"])
-	assert.False(t, obj.Permissions["can_action"])
-
-	// Test regular user with admin.write permission
-	regularUser.Permissions = `["admin.write"]`
-	obj.BuildPermissions(db, regularUser)
-	assert.True(t, obj.Permissions["can_create"])
-	assert.True(t, obj.Permissions["can_update"])
-	assert.True(t, obj.Permissions["can_delete"])
-	assert.True(t, obj.Permissions["can_action"])
-}
-
 func TestHandleAdminJson(t *testing.T) {
-	// Initialize config to avoid nil pointer dereference
-	if config.GlobalConfig == nil {
-		config.GlobalConfig = &config.Config{
-			APIPrefix:     "/api",
-			MonitorPrefix: "/metrics",
-		}
-	}
 
 	db := setupAdminsTestDB(t)
 	router := setupAdminsTestRouter(t, db)
@@ -378,7 +330,6 @@ func TestHandleAdminJson(t *testing.T) {
 	user, err := CreateUser(db, "test@example.com", "password123")
 	require.NoError(t, err)
 	user.Role = RoleSuperAdmin
-	user.Permissions = `["*"]`
 	err = UpdateUserFields(db, user, map[string]any{"Role": RoleSuperAdmin, "Permissions": `["*"]`})
 	require.NoError(t, err)
 
@@ -758,7 +709,6 @@ func TestAdminObject_handleCreate(t *testing.T) {
 	user, err := CreateUser(db, "admin@example.com", "password123")
 	require.NoError(t, err)
 	user.Role = RoleSuperAdmin
-	user.Permissions = `["*"]`
 	err = UpdateUserFields(db, user, map[string]any{"Role": RoleSuperAdmin, "Permissions": `["*"]`})
 	require.NoError(t, err)
 
@@ -798,7 +748,6 @@ func TestAdminObject_handleUpdate(t *testing.T) {
 	user, err := CreateUser(db, "admin@example.com", "password123")
 	require.NoError(t, err)
 	user.Role = RoleSuperAdmin
-	user.Permissions = `["*"]`
 	err = UpdateUserFields(db, user, map[string]any{"Role": RoleSuperAdmin, "Permissions": `["*"]`})
 	require.NoError(t, err)
 
@@ -843,7 +792,6 @@ func TestAdminObject_handleDelete(t *testing.T) {
 	user, err := CreateUser(db, "admin@example.com", "password123")
 	require.NoError(t, err)
 	user.Role = RoleSuperAdmin
-	user.Permissions = `["*"]`
 	err = UpdateUserFields(db, user, map[string]any{"Role": RoleSuperAdmin, "Permissions": `["*"]`})
 	require.NoError(t, err)
 
@@ -885,7 +833,6 @@ func TestAdminObject_handleAction(t *testing.T) {
 	user, err := CreateUser(db, "admin@example.com", "password123")
 	require.NoError(t, err)
 	user.Role = RoleSuperAdmin
-	user.Permissions = `["*"]`
 	err = UpdateUserFields(db, user, map[string]any{"Role": RoleSuperAdmin, "Permissions": `["*"]`})
 	require.NoError(t, err)
 
@@ -931,7 +878,6 @@ func TestRegisterAdmins(t *testing.T) {
 	user, err := CreateUser(db, "admin@example.com", "password123")
 	require.NoError(t, err)
 	user.Role = RoleSuperAdmin
-	user.Permissions = `["*"]`
 	err = UpdateUserFields(db, user, map[string]any{"Role": RoleSuperAdmin, "Permissions": `["*"]`})
 	require.NoError(t, err)
 

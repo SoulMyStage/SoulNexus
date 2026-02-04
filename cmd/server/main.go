@@ -264,7 +264,6 @@ func main() {
 	}
 
 	// 15. Start Timed task
-	go task.StartOfflineChecker(db)
 	// Start Email Cleaner Task
 	task.StartEmailCleaner(db)
 	// Start Quota Alert Checker

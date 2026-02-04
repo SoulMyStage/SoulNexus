@@ -584,7 +584,7 @@ func (h *Handlers) handleUserSigninByPassword(c *gin.Context) {
 	err = models.CheckUserAllowLogin(db, user)
 	if err != nil {
 		logger.Warn("Login failed: user not allowed to login", zap.String("email", form.Email), zap.Uint("userID", user.ID), zap.String("ip", clientIP), zap.Error(err))
-		response.Fail(c, "login failed", err)
+		response.Fail(c, "user no authorization to login", err)
 		return
 	}
 
@@ -1055,6 +1055,12 @@ func (h *Handlers) handleUserSignup(c *gin.Context) {
 		sendHashMail(db, user, constants.SigUserVerifyEmail, constants.KEY_VERIFY_EMAIL_EXPIRED, "180d", c.ClientIP(), c.Request.UserAgent())
 		r["expired"] = "180d"
 	} else {
+		// Check if user is allowed to login before auto-login
+		err = models.CheckUserAllowLogin(db, user)
+		if err != nil {
+			LingEcho.AbortWithJSONError(c, http.StatusForbidden, err)
+			return
+		}
 		models.Login(c, user) //Login now
 	}
 	c.JSON(http.StatusOK, r)

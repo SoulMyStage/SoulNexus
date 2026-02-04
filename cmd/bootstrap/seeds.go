@@ -19,23 +19,18 @@ func (s *SeedService) SeedAll() error {
 	if err := s.seedConfigs(); err != nil {
 		return err
 	}
-
 	if err := s.seedAdminUsers(); err != nil {
 		return err
 	}
-
 	if err := s.seedAssistants(); err != nil {
 		return err
 	}
-
 	if err := s.seedPromptModels(); err != nil {
 		return err
 	}
-
 	if err := s.seedPromptArgs(); err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -52,7 +47,7 @@ func (s *SeedService) seedConfigs() error {
 			if config.GlobalConfig.Server.Name != "" {
 				return config.GlobalConfig.Server.Name
 			}
-			return "LingEcho"
+			return "SoulNexus"
 		}()},
 		{Key: constants.KEY_SITE_LOGO_URL, Desc: "Site Logo", Autoload: true, Public: true, Format: "text", Value: func() string {
 			if config.GlobalConfig.Server.Logo != "" {
@@ -64,7 +59,7 @@ func (s *SeedService) seedConfigs() error {
 			if config.GlobalConfig.Server.Desc != "" {
 				return config.GlobalConfig.Server.Desc
 			}
-			return "LingEcho - Intelligent Voice Customer Service Platform"
+			return "SoulNexus - Intelligent Voice Customer Service Platform"
 		}()},
 		{Key: constants.KEY_SITE_TERMS_URL, Desc: "Terms of Service", Autoload: true, Public: true, Format: "text", Value: func() string {
 			if config.GlobalConfig.Server.TermsURL != "" {
@@ -82,7 +77,6 @@ func (s *SeedService) seedConfigs() error {
 		{Key: constants.KEY_SITE_RESET_PASSWORD_DONE_API, Desc: "Reset Password API", Autoload: true, Public: true, Format: "text", Value: apiPrefix + "/auth/reset-password-done"},
 		{Key: constants.KEY_SITE_LOGIN_NEXT, Desc: "Login Redirect Page", Autoload: true, Public: true, Format: "text", Value: apiPrefix + "/admin/"},
 		{Key: constants.KEY_SITE_USER_ID_TYPE, Desc: "User ID Type", Autoload: true, Public: true, Format: "text", Value: "email"},
-		// Search configuration
 		{Key: constants.KEY_SEARCH_ENABLED, Desc: "Search Feature Enabled", Autoload: true, Public: true, Format: "bool", Value: func() string {
 			if config.GlobalConfig.Features.SearchEnabled {
 				return "true"
@@ -121,16 +115,12 @@ func (s *SeedService) seedConfigs() error {
 }
 
 func (s *SeedService) seedAdminUsers() error {
-	// Super admin permissions (all permissions)
-	allPermissions := `["*"]`
-
 	defaultAdmins := []models.User{
 		{
 			Email:       "admin@lingecho.com",
 			Password:    models.HashPassword("admin123"),
 			IsStaff:     true,
 			Role:        models.RoleSuperAdmin,
-			Permissions: allPermissions,
 			DisplayName: "Administrator",
 			Enabled:     true,
 		},
@@ -139,7 +129,6 @@ func (s *SeedService) seedAdminUsers() error {
 			Password:    models.HashPassword("admin123"),
 			IsStaff:     true,
 			Role:        models.RoleSuperAdmin,
-			Permissions: allPermissions,
 			DisplayName: "Administrator",
 			Enabled:     true,
 		},

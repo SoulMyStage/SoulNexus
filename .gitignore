@@ -50,13 +50,9 @@ uploads/.env
 /media_cache/
 /recorddata/
 /tracedata/
-/pkg/llm/package.json
-/pkg/llm/package-lock.json
-/pkg/llm/node_modules
 
 # Node modules and dependency files
 */node_modules/
-/node_modules/
 /package-lock.json
 /ui/yarn.lock
 

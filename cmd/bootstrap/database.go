@@ -90,7 +90,6 @@ func RunInitSQL(db *gorm.DB, sqlFilePath string) error {
 		return err
 	}
 	defer f.Close()
-
 	var (
 		sb      strings.Builder
 		scanner = bufio.NewScanner(f)
@@ -98,7 +97,6 @@ func RunInitSQL(db *gorm.DB, sqlFilePath string) error {
 	// Relax token limit (long lines)
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 1024*1024)
-
 	for scanner.Scan() {
 		line := scanner.Text()
 		trim := strings.TrimSpace(line)
