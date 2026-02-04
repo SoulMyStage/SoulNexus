@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	// TTSEchoSuppressionWindow TTS回音抑制窗口（毫秒）
-	ttsEchoSuppressionWindow = 2000
-	// AudioEnergyThreshold 音频能量阈值（用于检测有效音频）
-	audioEnergyThreshold = 1000
+	// TTSEchoSuppressionWindow TTS回音抑制窗口（毫秒）- 延长到3秒
+	ttsEchoSuppressionWindow = 3000
+	// AudioEnergyThreshold 音频能量阈值（用于检测有效音频）- 提高阈值
+	audioEnergyThreshold = 1500
 )
 
 // AudioManager 音频管理器 - 解决TTS冲突问题
@@ -135,35 +135,43 @@ func (m *AudioManager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
 		return false
 	}
 
-	// 只检查最近几帧（减少计算量）
-	checkFrames := 10
+	// 检查更多帧以提高准确性
+	checkFrames := 15
 	if len(m.ttsOutputBuffer) < checkFrames {
 		checkFrames = len(m.ttsOutputBuffer)
 	}
 
 	startIdx := len(m.ttsOutputBuffer) - checkFrames
 
-	// 快速能量匹配
+	// 更严格的能量和相似度匹配
 	for i := startIdx; i < len(m.ttsOutputBuffer); i++ {
 		frame := m.ttsOutputBuffer[i]
 
-		// 如果能量差异太大，不可能是回音
+		// 更严格的能量匹配 - 能量差异不能超过30%
 		energyDiff := abs64(inputEnergy - frame.Energy)
-		if energyDiff > inputEnergy/2 {
+		energyThreshold := frame.Energy * 3 / 10 // 30%
+		if energyDiff > energyThreshold {
 			continue
 		}
 
-		// 检查时间窗口（回音通常在TTS输出后200-2000ms内）
+		// 检查时间窗口（回音通常在TTS输出后100-3000ms内）
 		timeDiff := time.Since(frame.Timestamp)
-		if timeDiff < 200*time.Millisecond || timeDiff > 2*time.Second {
+		if timeDiff < 100*time.Millisecond || timeDiff > 3*time.Second {
 			continue
 		}
 
 		// 如果数据长度相似，进行更详细的比较
-		if abs(len(inputData)-len(frame.Data)) < len(frame.Data)/4 {
-			// 计算相似度（简化版：比较前几个样本）
+		lengthDiff := abs(len(inputData) - len(frame.Data))
+		if lengthDiff < len(frame.Data)/3 { // 长度差异不超过33%
+			// 计算相似度（提高阈值）
 			similarity := m.calculateSimilarity(inputData, frame.Data)
-			if similarity > 0.7 {
+			if similarity > 0.6 { // 降低相似度阈值，更容易检测到回音
+				m.logger.Debug("检测到回音匹配",
+					zap.Float64("similarity", similarity),
+					zap.Int64("inputEnergy", inputEnergy),
+					zap.Int64("frameEnergy", frame.Energy),
+					zap.Duration("timeDiff", timeDiff),
+				)
 				return true
 			}
 		}

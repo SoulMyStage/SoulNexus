@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -518,8 +519,15 @@ func (s *Session) HandleAudio(data []byte) error {
 
 	// 如果 TTS 正在播放，使用 VAD 检测 barge-in
 	if ttsPlaying {
-		// 检测用户是否说话（barge-in）
-		if vadDetector.CheckBargeIn(pcmData, true) {
+		// 首先使用音频管理器进行严格的回音过滤
+		filteredData, shouldProcess := audioManager.ProcessInputAudio(pcmData, true)
+		if !shouldProcess {
+			// 被音频管理器过滤掉，直接返回
+			return nil
+		}
+
+		// 通过音频管理器过滤后，再使用VAD检测用户是否真的在说话
+		if vadDetector.CheckBargeIn(filteredData, true) {
 			s.config.Logger.Info("检测到用户说话，中断 TTS")
 			// 优雅地取消 TTS 播放：先设置状态，再取消context
 			s.stateManager.SetTTSPlaying(false)
@@ -531,20 +539,10 @@ func (s *Session) HandleAudio(data []byte) error {
 			}
 
 			// 继续处理音频（用户开始说话了）
-			// 使用音频管理器处理输入音频
-			processedData, shouldProcess := audioManager.ProcessInputAudio(pcmData, false)
-			if !shouldProcess {
-				return nil
-			}
-			return s.asrService.SendAudio(processedData)
+			return s.asrService.SendAudio(filteredData)
 		}
-		// TTS 播放中且未检测到用户说话，使用音频管理器过滤回音
-		_, shouldProcess := audioManager.ProcessInputAudio(pcmData, true)
-		if !shouldProcess {
-			// 被过滤（可能是TTS回音或无效音频）
-			return nil
-		}
-		// 即使通过过滤，也不发送到 ASR（TTS 播放中，等待 barge-in 或 TTS 结束）
+
+		// TTS 播放中且未检测到用户说话，不发送到ASR
 		return nil
 	}
 
@@ -558,6 +556,29 @@ func (s *Session) HandleAudio(data []byte) error {
 
 	// 发送到ASR服务
 	return s.asrService.SendAudio(processedData)
+}
+
+// shouldSuppressError 判断是否应该抑制错误日志
+func (s *Session) shouldSuppressError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errMsg := err.Error()
+	// 抑制ASR连接相关的错误，这些错误会由重连机制处理
+	suppressKeywords := []string{
+		"服务未连接",
+		"recognizer not running",
+		"发送音频失败: recognizer not running",
+	}
+
+	for _, keyword := range suppressKeywords {
+		if strings.Contains(errMsg, keyword) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // HandleText 处理文本消息
@@ -883,7 +904,10 @@ func (s *Session) messageLoop() {
 		case websocket.BinaryMessage:
 			// 音频消息
 			if err := s.HandleAudio(message); err != nil {
-				s.config.Logger.Warn("处理音频消息失败", zap.Error(err))
+				// 只记录非ASR连接相关的错误，避免日志泛滥
+				if !s.shouldSuppressError(err) {
+					s.config.Logger.Warn("处理音频消息失败", zap.Error(err))
+				}
 			}
 		case websocket.TextMessage:
 			// 文本消息

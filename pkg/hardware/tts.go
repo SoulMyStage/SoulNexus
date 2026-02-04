@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
@@ -14,6 +15,7 @@ import (
 // TTSService TTS服务实现
 type TTSService struct {
 	ctx          context.Context
+	cancel       context.CancelFunc // 添加cancel函数用于停止所有goroutine
 	credential   *models.UserCredential
 	speaker      string
 	synthesizer  synthesizer.SynthesisService
@@ -27,6 +29,9 @@ type TTSService struct {
 	firstSegmentMinLen int  // 第一段最小长度
 	firstSegmentMaxLen int  // 第一段最大长度
 	minSplitLength     int  // 最小分割长度
+
+	// 并发控制
+	activeGoroutines sync.WaitGroup // 跟踪活跃的goroutine
 }
 
 // TextSplitConfig 文本分割配置
@@ -54,8 +59,12 @@ func NewTTSService(
 	errorHandler *ErrHandler,
 	logger *zap.Logger,
 ) *TTSService {
+	// 创建可取消的context
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &TTSService{
 		ctx:                ctx,
+		cancel:             cancel,
 		credential:         credential,
 		speaker:            speaker,
 		synthesizer:        synthesizer,
@@ -148,7 +157,9 @@ func (s *TTSService) synthesizeWithSplit(ctx context.Context, text string) (<-ch
 
 	// 在goroutine中处理分割合成
 	go func() {
+		s.activeGoroutines.Add(1)
 		defer func() {
+			s.activeGoroutines.Done()
 			if r := recover(); r != nil {
 				s.logger.Error("TTS分割合成goroutine发生panic", zap.Any("panic", r))
 			}
@@ -163,15 +174,6 @@ func (s *TTSService) synthesizeWithSplit(ctx context.Context, text string) (<-ch
 
 // synthesizeSegments 合成多个文本片段
 func (s *TTSService) synthesizeSegments(ctx context.Context, segments []TextSegment, audioChan chan<- []byte) {
-	s.mu.RLock()
-	synthesizer := s.synthesizer
-	s.mu.RUnlock()
-
-	if synthesizer == nil {
-		s.logger.Error("合成器不可用")
-		return
-	}
-
 	// 按优先级顺序合成片段
 	for _, segment := range segments {
 		select {
@@ -179,6 +181,17 @@ func (s *TTSService) synthesizeSegments(ctx context.Context, segments []TextSegm
 			s.logger.Info("TTS分割合成被取消")
 			return
 		default:
+		}
+
+		// 每次循环都重新获取synthesizer，确保使用最新的
+		s.mu.RLock()
+		synthesizer := s.synthesizer
+		closed := s.closed
+		s.mu.RUnlock()
+
+		if closed || synthesizer == nil {
+			s.logger.Warn("TTS服务已关闭或合成器不可用，停止合成")
+			return
 		}
 
 		s.logger.Info("开始合成片段",
@@ -249,7 +262,9 @@ func (s *TTSService) synthesizeSingle(ctx context.Context, text string) (<-chan 
 
 	// 在goroutine中合成
 	go func() {
+		s.activeGoroutines.Add(1)
 		defer func() {
+			s.activeGoroutines.Done()
 			// 安全关闭channel，避免panic
 			if r := recover(); r != nil {
 				s.logger.Error("TTS合成goroutine发生panic", zap.Any("panic", r))
@@ -637,12 +652,55 @@ func (s *TTSService) UpdateSpeaker(speakerID string, synthesizer synthesizer.Syn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 关闭旧的合成器
-	if s.synthesizer != nil {
-		s.synthesizer.Close()
+	s.logger.Info("开始更新发音人",
+		zap.String("newSpeakerID", speakerID),
+		zap.String("oldSpeaker", s.speaker),
+	)
+
+	// 1. 取消所有正在运行的goroutine
+	if s.cancel != nil {
+		s.cancel()
 	}
 
-	// 更新发音人和合成器
+	// 2. 等待所有goroutine完成（最多等待2秒）
+	done := make(chan struct{})
+	go func() {
+		s.activeGoroutines.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		s.logger.Debug("所有TTS goroutine已停止")
+	case <-time.After(2 * time.Second):
+		s.logger.Warn("等待TTS goroutine停止超时，强制继续")
+	}
+
+	// 3. 安全关闭旧的合成器
+	if s.synthesizer != nil {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s.logger.Warn("关闭旧合成器时发生panic，已恢复",
+						zap.Any("panic", r),
+						zap.String("oldSpeaker", s.speaker),
+					)
+				}
+			}()
+
+			if err := s.synthesizer.Close(); err != nil {
+				s.logger.Warn("关闭旧合成器失败",
+					zap.Error(err),
+					zap.String("oldSpeaker", s.speaker),
+				)
+			}
+		}()
+	}
+
+	// 4. 创建新的context和cancel函数
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+
+	// 5. 更新发音人和合成器
 	s.speaker = speakerID
 	s.synthesizer = synthesizer
 

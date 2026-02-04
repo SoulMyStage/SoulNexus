@@ -22,7 +22,6 @@ import (
 	"github.com/code-100-precent/LingEcho/pkg/logger"
 	"github.com/code-100-precent/LingEcho/pkg/metrics"
 	"github.com/code-100-precent/LingEcho/pkg/middleware"
-	"github.com/code-100-precent/LingEcho/pkg/prompt"
 	"github.com/code-100-precent/LingEcho/pkg/sip"
 	"github.com/code-100-precent/LingEcho/pkg/utils"
 	"github.com/code-100-precent/LingEcho/pkg/utils/backup"
@@ -137,12 +136,6 @@ func main() {
 
 	// Initialize global intelligent risk control manager
 	utils.InitGlobalIntelligentRiskControl(logger.Lg)
-
-	// 10. Load Prompt System
-	err = prompt.InitPromptSystem(db)
-	if err != nil {
-		logger.Error("init prompt system failed: ", zap.Error(err))
-	}
 
 	//// 11. New App
 	app := NewLingEchoApp(db)

@@ -148,6 +148,7 @@ func (m *ReconnectManager) NotifyDisconnect(err error) {
 	shouldStart := !m.reconnecting
 	if shouldStart {
 		m.lastError = err
+		m.reconnecting = true // 立即设置重连状态
 	}
 	m.mu.Unlock()
 
@@ -156,7 +157,7 @@ func (m *ReconnectManager) NotifyDisconnect(err error) {
 	}
 
 	if shouldStart {
-		m.Start()
+		go m.reconnectLoop() // 直接启动重连循环，避免Start()的重复检查
 	}
 }
 

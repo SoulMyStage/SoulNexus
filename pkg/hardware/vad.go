@@ -66,15 +66,15 @@ func (v *VADDetector) CheckBargeIn(pcmData []byte, ttsPlaying bool) bool {
 	// 计算音频能量 (RMS)
 	rms := calculateRMS(pcmData)
 
-	// 参考xiaozhi-server的实现：TTS播放时大幅提高阈值避免误触发
-	// 基础阈值设为800（正常语音通常在500-5000之间）
-	baseThreshold := 800.0
-	// TTS播放时阈值提高3倍，避免TTS回音误触发barge-in
-	ttsThresholdMultiplier := 3.0
-	effectiveThreshold := baseThreshold * ttsThresholdMultiplier // 2400
+	// 更严格的参数设置，防止AI声音被ASR识别
+	// 基础阈值提高到1200（原来是800）
+	baseThreshold := 1200.0
+	// TTS播放时阈值提高4倍（原来是3倍），进一步减少误触发
+	ttsThresholdMultiplier := 4.0
+	effectiveThreshold := baseThreshold * ttsThresholdMultiplier // 4800
 
-	// 需要连续8帧超过阈值才触发，进一步减少误触发
-	requiredFrames := 8
+	// 需要连续12帧超过阈值才触发（原来是8帧），更严格的检测
+	requiredFrames := 12
 
 	// 限流日志：每2秒最多记录一次
 	now := time.Now()

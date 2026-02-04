@@ -1053,16 +1053,49 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 		p.logger.Info("TTS正在播放，先停止当前播放")
 		p.stateManager.SetTTSPlaying(false)
 		p.stateManager.CancelTTS()
+
+		// 等待TTS停止
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	// 创建新的TTS synthesizer
-	synthesizer, err := p.serviceFactory.CreateTTS(p.credential, speakerID, p.sampleRate, p.channels)
+	// 创建新的TTS synthesizer，使用defer确保错误时的清理
+	var newSynthesizer synthesizer.SynthesisService
+	var err error
+
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("切换发音人时发生panic",
+				zap.Any("panic", r),
+				zap.String("speakerID", speakerID),
+			)
+			// 如果创建了新的synthesizer但出现panic，尝试关闭它
+			if newSynthesizer != nil {
+				func() {
+					defer func() { recover() }()
+					newSynthesizer.Close()
+				}()
+			}
+		}
+	}()
+
+	newSynthesizer, err = p.serviceFactory.CreateTTS(p.credential, speakerID, p.sampleRate, p.channels)
 	if err != nil {
 		return fmt.Errorf("创建新TTS synthesizer失败: %w", err)
 	}
 
-	// 更新TTS服务
-	p.ttsService.UpdateSpeaker(speakerID, synthesizer)
+	// 安全更新TTS服务
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				p.logger.Error("更新TTS服务时发生panic",
+					zap.Any("panic", r),
+					zap.String("speakerID", speakerID),
+				)
+			}
+		}()
+
+		p.ttsService.UpdateSpeaker(speakerID, newSynthesizer)
+	}()
 
 	// 重新配置TTS文本分割（重要：切换发音人后需要重新配置）
 	config := TextSplitConfig{
@@ -1074,12 +1107,16 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 	p.ttsService.SetTextSplitConfig(config)
 
 	// 更新processor中的synthesizer引用
-	p.synthesizer = synthesizer
+	p.synthesizer = newSynthesizer
 
 	// 更新发音人管理器状态
 	err = p.speakerManager.SetCurrentSpeaker(speakerID)
 	if err != nil {
-		return fmt.Errorf("更新发音人状态失败: %w", err)
+		p.logger.Warn("更新发音人状态失败，但切换已完成",
+			zap.Error(err),
+			zap.String("speakerID", speakerID),
+		)
+		// 不返回错误，因为实际切换已经成功
 	}
 
 	p.logger.Info("发音人切换完成，已重新配置TTS文本分割",

@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,13 +130,42 @@ func (s *ASRService) SendAudio(data []byte) error {
 	s.mu.RLock()
 	connected := s.connected
 	transcriber := s.transcriber
+	isReconnecting := s.reconnectMgr.IsReconnecting()
 	s.mu.RUnlock()
 
+	// 如果正在重连，直接返回nil避免错误日志泛滥
+	if isReconnecting {
+		return nil
+	}
+
 	if !connected || transcriber == nil {
-		return NewTransientError("ASR", "服务未连接", nil)
+		// 触发重连但不返回错误，避免日志泛滥
+		s.triggerReconnectOnce()
+		return nil
+	}
+
+	// 检查transcriber活跃状态
+	if !transcriber.Activity() {
+		s.logger.Debug("ASR transcriber不活跃，触发重连")
+		s.mu.Lock()
+		s.connected = false
+		s.mu.Unlock()
+		s.reconnectMgr.NotifyDisconnect(NewTransientError("ASR", "transcriber不活跃", nil))
+		return nil
 	}
 
 	if err := transcriber.SendAudioBytes(data); err != nil {
+		// 检查是否是"recognizer not running"错误
+		if strings.Contains(err.Error(), "not running") {
+			s.logger.Debug("检测到recognizer not running错误，触发重连")
+			s.mu.Lock()
+			s.connected = false
+			s.mu.Unlock()
+			s.reconnectMgr.NotifyDisconnect(err)
+			return nil // 返回nil避免上层重复记录错误
+		}
+
+		// 其他错误，检查Activity状态
 		if !transcriber.Activity() {
 			s.mu.Lock()
 			s.connected = false
@@ -146,6 +176,14 @@ func (s *ASRService) SendAudio(data []byte) error {
 	}
 
 	return nil
+}
+
+// triggerReconnectOnce 确保重连只触发一次
+func (s *ASRService) triggerReconnectOnce() {
+	if !s.reconnectMgr.IsReconnecting() {
+		s.logger.Debug("ASR服务未连接，触发重连")
+		s.reconnectMgr.NotifyDisconnect(NewTransientError("ASR", "服务未连接", nil))
+	}
 }
 
 // IsConnected 检查是否已连接

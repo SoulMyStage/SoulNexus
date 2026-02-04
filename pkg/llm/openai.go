@@ -863,7 +863,8 @@ func (h *LLMHandler) QueryStream(text string, options QueryOptions, callback fun
 
 		// Update request and make another call to get final response
 		request.Messages = h.messages
-		request.Stream = false // Use non-streaming for final response
+		request.Stream = false      // Use non-streaming for final response
+		request.StreamOptions = nil // Clear stream options for non-streaming request
 		h.mutex.Unlock()
 
 		// Make another call to get final response after tool execution
