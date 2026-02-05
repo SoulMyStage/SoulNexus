@@ -159,30 +159,34 @@ func TestRequestValidation(t *testing.T) {
 		{
 			name: "valid request",
 			req: &RegisterRequest{
-				SpeakerID: "test_speaker",
-				AudioData: []byte("RIFF....WAVE...."), // 简单的WAV头部模拟
+				SpeakerID:   "test_speaker",
+				AssistantID: "test_assistant",
+				AudioData:   []byte("RIFF....WAVE...."), // 简单的WAV头部模拟
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing speaker id",
 			req: &RegisterRequest{
-				AudioData: []byte("RIFF....WAVE...."),
+				AssistantID: "test_assistant",
+				AudioData:   []byte("RIFF....WAVE...."),
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing audio data",
 			req: &RegisterRequest{
-				SpeakerID: "test_speaker",
+				SpeakerID:   "test_speaker",
+				AssistantID: "test_assistant",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid audio format",
 			req: &RegisterRequest{
-				SpeakerID: "test_speaker",
-				AudioData: []byte("invalid audio data"),
+				SpeakerID:   "test_speaker",
+				AssistantID: "test_assistant",
+				AudioData:   []byte("invalid audio data"),
 			},
 			wantErr: true,
 		},

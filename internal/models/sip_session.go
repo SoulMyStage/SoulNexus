@@ -18,10 +18,10 @@ const (
 
 // SipSession SIP会话表（用于存储待确认和活跃的会话信息）
 type SipSession struct {
-	ID        uint       `json:"id" gorm:"primaryKey"`
-	CreatedAt time.Time  `json:"createdAt" gorm:"autoCreateTime"`
-	UpdatedAt time.Time  `json:"updatedAt" gorm:"autoUpdateTime"`
-	DeletedAt *time.Time `json:"-" gorm:"index"`
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt time.Time      `json:"createdAt" gorm:"autoCreateTime"`
+	UpdatedAt time.Time      `json:"updatedAt" gorm:"autoUpdateTime"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// 会话基本信息
 	CallID        string           `json:"callId" gorm:"size:128;index;not null;uniqueIndex"` // SIP Call-ID

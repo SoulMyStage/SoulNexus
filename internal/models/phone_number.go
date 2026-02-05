@@ -87,7 +87,7 @@ func CreatePhoneNumber(db *gorm.DB, phoneNumber *PhoneNumber) error {
 // GetPhoneNumberByID 根据ID获取号码
 func GetPhoneNumberByID(db *gorm.DB, id uint) (*PhoneNumber, error) {
 	var phoneNumber PhoneNumber
-	err := db.Preload("User").Preload("ActiveScheme").First(&phoneNumber, id).Error
+	err := db.Preload("User").Preload("Group").Preload("ActiveScheme").First(&phoneNumber, id).Error
 	if err != nil {
 		return nil, err
 	}

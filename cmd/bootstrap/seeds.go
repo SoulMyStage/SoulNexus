@@ -25,12 +25,6 @@ func (s *SeedService) SeedAll() error {
 	if err := s.seedAssistants(); err != nil {
 		return err
 	}
-	if err := s.seedPromptModels(); err != nil {
-		return err
-	}
-	if err := s.seedPromptArgs(); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -217,57 +211,4 @@ func (s *SeedService) seedAssistants() error {
 		}
 	}
 	return nil
-}
-
-func (s *SeedService) seedPromptModels() error {
-	defaultPrompts := []models.PromptModel{
-		{
-			Name:        "summarize_article",
-			Description: "Summarize the main content of an article, suitable for extracting summaries from long paragraphs or blog posts.",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		},
-		{
-			Name:        "translate_text",
-			Description: "Translate input text to a specified language, suitable for scenarios like English-Chinese translation.",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		},
-		{
-			Name:        "generate_title",
-			Description: "Generate a concise and attractive title based on article content.",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		},
-		{
-			Name:        "email_reply_generator",
-			Description: "Automatically generate professional email replies based on email content and intent.",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		},
-	}
-	var count int64
-	if err := s.db.Model(models.PromptModel{}).Count(&count).Error; err != nil {
-		return err
-	}
-	if count != 0 {
-		return nil
-	}
-	return s.db.Model(models.PromptModel{}).Create(defaultPrompts).Error
-}
-
-func (s *SeedService) seedPromptArgs() error {
-	defaultArgs := []models.PromptArgModel{
-		// summarize_article
-		{Name: "content", Description: "Article content to be summarized", Required: true, PromptID: 1},
-		// translate_text
-		{Name: "text", Description: "Text to be translated", Required: true, PromptID: 2},
-		{Name: "target_language", Description: "Target language (e.g., en, zh)", Required: true, PromptID: 2},
-		// generate_title
-		{Name: "article", Description: "Article content", Required: true, PromptID: 3},
-		// email_reply_generator
-		{Name: "email_body", Description: "Original email content", Required: true, PromptID: 4},
-		{Name: "tone", Description: "Reply tone (e.g., formal, casual)", Required: false, PromptID: 4},
-	}
-	return s.db.Model(models.PromptArgModel{}).Create(defaultArgs).Error
 }

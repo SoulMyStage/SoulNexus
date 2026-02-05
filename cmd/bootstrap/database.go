@@ -142,8 +142,6 @@ func RunMigrations(db *gorm.DB) error {
 		&models.Assistant{},
 		&models.AssistantTool{},
 		&models.ChatSessionLog{},
-		&models.PromptModel{},
-		&models.PromptArgModel{},
 		&notification.InternalNotification{},
 		&models.Knowledge{},
 		&models.VoiceTrainingTask{},

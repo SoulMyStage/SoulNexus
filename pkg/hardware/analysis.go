@@ -51,7 +51,7 @@ func (s *AnalysisService) AnalyzeCallRecording(ctx context.Context, recordingID 
 		return fmt.Errorf("获取录音记录失败: %w", err)
 	}
 	if !forceAnalyze && recording.AnalysisStatus == "completed" {
-		s.logger.Info(fmt.Sprintf("%d 录音已分析完成，跳过", recording))
+		s.logger.Info(fmt.Sprintf("录音 %d 已分析完成，跳过", recording.ID))
 		return nil
 	}
 	if err := s.updateAnalysisStatus(recordingID, "analyzing", ""); err != nil {

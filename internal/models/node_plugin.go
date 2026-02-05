@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -88,6 +91,26 @@ type NodePluginDefinition struct {
 	Dependencies []string `json:"dependencies,omitempty"` // 依赖的其他插件
 }
 
+// Value implements driver.Valuer interface for GORM
+func (npd NodePluginDefinition) Value() (driver.Value, error) {
+	return json.Marshal(npd)
+}
+
+// Scan implements sql.Scanner interface for GORM
+func (npd *NodePluginDefinition) Scan(value interface{}) error {
+	if value == nil {
+		*npd = NodePluginDefinition{}
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("cannot scan %T into NodePluginDefinition", value)
+	}
+
+	return json.Unmarshal(bytes, npd)
+}
+
 // NodePluginPort 端口定义
 type NodePluginPort struct {
 	Name        string      `json:"name"`                  // 端口名称
@@ -142,6 +165,26 @@ type FormFieldValidation struct {
 type NodePluginSchema struct {
 	Properties map[string]SchemaProperty `json:"properties"`         // 属性定义
 	Required   []string                  `json:"required,omitempty"` // 必需属性
+}
+
+// Value implements driver.Valuer interface for GORM
+func (nps NodePluginSchema) Value() (driver.Value, error) {
+	return json.Marshal(nps)
+}
+
+// Scan implements sql.Scanner interface for GORM
+func (nps *NodePluginSchema) Scan(value interface{}) error {
+	if value == nil {
+		*nps = NodePluginSchema{}
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("cannot scan %T into NodePluginSchema", value)
+	}
+
+	return json.Unmarshal(bytes, nps)
 }
 
 // SchemaProperty 属性定义

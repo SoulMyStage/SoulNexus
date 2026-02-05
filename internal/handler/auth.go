@@ -30,6 +30,86 @@ import (
 	"gorm.io/gorm"
 )
 
+// registerAuthRoutes User Module
+func (h *Handlers) registerAuthRoutes(r *gin.RouterGroup) {
+	auth := r.Group(config.GlobalConfig.Server.AuthPrefix)
+	{
+		// register
+		auth.GET("/register", h.handleUserSignupPage)
+		auth.POST("/register", h.handleUserSignup)
+		auth.POST("/register/email", h.handleUserSignupByEmail)
+		auth.POST("/send/email", h.handleSendEmailCode)
+
+		// captcha
+		auth.GET("/captcha", h.handleGetCaptcha)
+		auth.POST("/captcha/verify", h.handleVerifyCaptcha)
+
+		// password encryption salt
+		auth.GET("/salt", h.handleGetSalt)
+
+		// login
+		auth.GET("/login", h.handleUserSigninPage)
+		auth.POST("/login", h.handleUserSignin)
+		auth.POST("/login/password", h.handleUserSigninByPassword)
+		auth.POST("/login/email", h.handleUserSigninByEmail)
+
+		// logout
+		auth.GET("/logout", models.AuthRequired, h.handleUserLogout)
+		auth.GET("/info", models.AuthRequired, h.handleUserInfo)
+
+		// password management
+		auth.GET("/reset-password", h.handleUserResetPasswordPage)
+		auth.POST("/reset-password", h.handleResetPassword)
+		auth.POST("/reset-password/confirm", h.handleResetPasswordConfirm)
+		auth.POST("/change-password", models.AuthRequired, h.handleChangePassword)
+		auth.POST("/change-password/email", models.AuthRequired, h.handleChangePasswordByEmail)
+
+		// device management
+		auth.GET("/devices", models.AuthRequired, h.handleGetUserDevices)
+		auth.DELETE("/devices", models.AuthRequired, h.handleDeleteUserDevice)
+		auth.POST("/devices/trust", models.AuthRequired, h.handleTrustUserDevice)
+		auth.POST("/devices/untrust", models.AuthRequired, h.handleUntrustUserDevice)
+
+		// device verification (no auth required for login flow)
+		auth.POST("/devices/verify", h.handleVerifyDeviceForLogin)
+		auth.POST("/devices/send-verification", h.handleSendDeviceVerificationCode)
+
+		// email verification
+		auth.GET("/verify-email", h.handleVerifyEmail)
+		auth.POST("/send-email-verification", models.AuthRequired, h.handleSendEmailVerification)
+
+		// phone verification
+		auth.POST("/verify-phone", models.AuthRequired, h.handleVerifyPhone)
+		auth.POST("/send-phone-verification", models.AuthRequired, h.handleSendPhoneVerification)
+
+		// user management
+		auth.PUT("/update", models.AuthRequired, h.handleUserUpdate)
+		auth.PUT("/update/preferences", models.AuthRequired, h.handleUserUpdatePreferences)
+		auth.POST("/update/basic/info", models.AuthRequired, h.handleUserUpdateBasicInfo)
+
+		// notification settings
+		auth.PUT("/notification-settings", models.AuthRequired, h.handleUpdateNotificationSettings)
+
+		// user preferences
+		auth.PUT("/user-preferences", models.AuthRequired, h.handleUpdateUserPreferences)
+
+		// user stats
+		auth.GET("/stats", models.AuthRequired, h.handleGetUserStats)
+
+		// avatar upload (replace existing avatar)
+		auth.POST("/avatar/upload", models.AuthRequired, h.handleUploadAvatar)
+
+		// two-factor authentication
+		auth.POST("/two-factor/setup", models.AuthRequired, h.handleTwoFactorSetup)
+		auth.POST("/two-factor/enable", models.AuthRequired, h.handleTwoFactorEnable)
+		auth.POST("/two-factor/disable", models.AuthRequired, h.handleTwoFactorDisable)
+		auth.GET("/two-factor/status", models.AuthRequired, h.handleTwoFactorStatus)
+
+		// user activity logs
+		auth.GET("/activity", models.AuthRequired, h.handleGetUserActivity)
+	}
+}
+
 // handleUserSignupPage handle user signup page
 func (h *Handlers) handleUserSignupPage(c *gin.Context) {
 	ctx := LingEcho.GetRenderPageContext(c)
@@ -91,7 +171,6 @@ func (h *Handlers) handleUserSigninByEmail(c *gin.Context) {
 		LingEcho.AbortWithJSONError(c, http.StatusBadRequest, err)
 		return
 	}
-
 	clientIP := c.ClientIP()
 	userAgent := c.Request.UserAgent()
 	db := c.MustGet(constants.DbField).(*gorm.DB)
@@ -125,7 +204,7 @@ func (h *Handlers) handleUserSigninByEmail(c *gin.Context) {
 		}
 	}
 
-	// 3. 图形验证码验证（邮箱验证码登录需要）
+	// 3. 图形验证码验证
 	if captcha.GlobalCaptchaManager != nil {
 		if form.CaptchaID == "" || form.CaptchaCode == "" {
 			LingEcho.AbortWithJSONError(c, http.StatusBadRequest, errors.New("captcha is required"))
@@ -246,6 +325,12 @@ func (h *Handlers) handleUserSigninByEmail(c *gin.Context) {
 		logger.Warn("Failed to check device trust", zap.Error(err))
 	}
 
+	logger.Info("Device trust check result",
+		zap.String("deviceID", deviceID),
+		zap.Bool("isTrusted", isTrusted),
+		zap.Bool("isSuspicious", isSuspicious),
+		zap.Error(err))
+
 	// 如果设备不被信任，要求额外验证或拒绝登录
 	// 邮箱验证码登录本身就是一种额外验证，所以对于邮箱登录我们可以更宽松一些
 	if !isTrusted {
@@ -270,42 +355,48 @@ func (h *Handlers) handleUserSigninByEmail(c *gin.Context) {
 	}
 
 	// 13. 发送新设备登录警告邮件（异步）
+	logger.Info("Checking new device login alert conditions",
+		zap.Bool("isTrusted", isTrusted),
+		zap.Bool("isSuspicious", isSuspicious),
+		zap.String("deviceID", deviceID))
+
+	// 临时强制触发测试
+	logger.Info("FORCE TESTING: Sending new device login alert signal regardless of conditions")
+	deviceInfo := map[string]interface{}{
+		"deviceID":     deviceID,
+		"clientIP":     clientIP,
+		"location":     location,
+		"deviceType":   deviceType,
+		"os":           os,
+		"browser":      browser,
+		"isSuspicious": isSuspicious,
+		"loginTime":    time.Now().Format("2006-01-02 15:04:05"),
+	}
+	utils.Sig().Emit(constants.SigUserNewDeviceLogin, user, deviceInfo, db)
+
 	if !isTrusted || isSuspicious {
-		go func() {
-			displayName := user.DisplayName
-			if displayName == "" {
-				displayName = user.Email
-			}
+		logger.Info("Sending new device login alert signal",
+			zap.String("email", user.Email),
+			zap.String("deviceID", deviceID),
+			zap.Bool("isTrusted", isTrusted),
+			zap.Bool("isSuspicious", isSuspicious))
 
-			loginTime := time.Now().Format("2006-01-02 15:04:05")
-			securityURL := ""       // 可以设置为安全设置页面的URL
-			changePasswordURL := "" // 可以设置为修改密码页面的URL
-
-			err := notification.NewMailNotification(config.GlobalConfig.Services.Mail).SendNewDeviceLoginAlert(
-				user.Email,
-				displayName,
-				loginTime,
-				clientIP,
-				location,
-				deviceType,
-				os,
-				browser,
-				isSuspicious,
-				securityURL,
-				changePasswordURL,
-			)
-			if err != nil {
-				logger.Error("Failed to send new device login alert email",
-					zap.Error(err),
-					zap.String("email", user.Email),
-					zap.String("deviceID", deviceID))
-			} else {
-				logger.Info("New device login alert email sent",
-					zap.String("email", user.Email),
-					zap.String("deviceID", deviceID),
-					zap.Bool("isSuspicious", isSuspicious))
-			}
-		}()
+		// 使用信号发送新设备登录警告邮件
+		deviceInfo := map[string]interface{}{
+			"deviceID":     deviceID,
+			"clientIP":     clientIP,
+			"location":     location,
+			"deviceType":   deviceType,
+			"os":           os,
+			"browser":      browser,
+			"isSuspicious": isSuspicious,
+			"loginTime":    time.Now().Format("2006-01-02 15:04:05"),
+		}
+		utils.Sig().Emit(constants.SigUserNewDeviceLogin, user, deviceInfo, db)
+	} else {
+		logger.Info("Skipping new device login alert - device is trusted and not suspicious",
+			zap.String("email", user.Email),
+			zap.String("deviceID", deviceID))
 	}
 
 	// 14. 邮箱验证码登录成功后，重置密码登录限制
@@ -630,9 +721,6 @@ func (h *Handlers) handleUserSigninByPassword(c *gin.Context) {
 	if err != nil {
 		logger.Warn("Failed to check device trust", zap.Error(err))
 	}
-
-	// 如果设备不被信任，要求额外验证或拒绝登录
-	// 但是如果用户已经有有效的会话令牌，则允许继续（避免取消信任当前设备后立即失去访问权限）
 	if !isTrusted {
 		// 检查是否是通过有效令牌登录（表示用户已经通过了之前的验证）
 		isTokenLogin := form.AuthToken != ""
@@ -681,43 +769,23 @@ func (h *Handlers) handleUserSigninByPassword(c *gin.Context) {
 		logger.Warn("Failed to record login history", zap.Error(err))
 	}
 
-	// 14. 发送新设备登录警告邮件（异步）
+	// 14. 发送新设备登录警告邮件
+	logger.Info("Checking new device login alert conditions",
+		zap.Bool("isTrusted", isTrusted),
+		zap.Bool("isSuspicious", isSuspicious),
+		zap.String("deviceID", deviceID))
+
 	if !isTrusted || isSuspicious {
-		go func() {
-			displayName := user.DisplayName
-			if displayName == "" {
-				displayName = user.Email
-			}
-
-			loginTime := time.Now().Format("2006-01-02 15:04:05")
-			securityURL := ""       // 可以设置为安全设置页面的URL
-			changePasswordURL := "" // 可以设置为修改密码页面的URL
-
-			err := notification.NewMailNotification(config.GlobalConfig.Services.Mail).SendNewDeviceLoginAlert(
-				user.Email,
-				displayName,
-				loginTime,
-				clientIP,
-				location,
-				deviceType,
-				os,
-				browser,
-				isSuspicious,
-				securityURL,
-				changePasswordURL,
-			)
-			if err != nil {
-				logger.Error("Failed to send new device login alert email",
-					zap.Error(err),
-					zap.String("email", user.Email),
-					zap.String("deviceID", deviceID))
-			} else {
-				logger.Info("New device login alert email sent",
-					zap.String("email", user.Email),
-					zap.String("deviceID", deviceID),
-					zap.Bool("isSuspicious", isSuspicious))
-			}
-		}()
+		logger.Info("Sending new device login alert signal",
+			zap.String("email", user.Email),
+			zap.String("deviceID", deviceID),
+			zap.Bool("isTrusted", isTrusted),
+			zap.Bool("isSuspicious", isSuspicious))
+		utils.Sig().Emit(constants.SigUserNewDeviceLogin, user, "", db)
+	} else {
+		logger.Info("Skipping new device login alert - device is trusted and not suspicious",
+			zap.String("email", user.Email),
+			zap.String("deviceID", deviceID))
 	}
 
 	// 15. 清除失败登录计数
@@ -756,8 +824,6 @@ func (h *Handlers) handleUserSigninByPassword(c *gin.Context) {
 		logger.Error("Login failed: models.Login aborted the request", zap.String("email", form.Email), zap.Uint("userID", user.ID), zap.String("ip", clientIP))
 		return
 	}
-
-	// 重新从数据库加载用户信息，确保获取最新的LastLogin等信息
 	updatedUser, err := models.GetUserByUID(db, user.ID)
 	if err != nil {
 		logger.Warn("Failed to reload user after login, using original user object", zap.Error(err))
@@ -2251,8 +2317,6 @@ func (h *Handlers) handleGetCaptcha(c *gin.Context) {
 		response.Fail(c, "Failed to generate captcha", err)
 		return
 	}
-
-	// 不返回验证码内容，只返回ID和图片
 	response.Success(c, "Captcha generated", gin.H{
 		"id":    capt.ID,
 		"image": capt.Image,

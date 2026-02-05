@@ -22,7 +22,6 @@ import (
 	"github.com/code-100-precent/LingEcho/pkg/logger"
 	"github.com/code-100-precent/LingEcho/pkg/metrics"
 	"github.com/code-100-precent/LingEcho/pkg/middleware"
-	"github.com/code-100-precent/LingEcho/pkg/sip"
 	"github.com/code-100-precent/LingEcho/pkg/utils"
 	"github.com/code-100-precent/LingEcho/pkg/utils/backup"
 	"github.com/code-100-precent/LingEcho/pkg/utils/search"
@@ -156,17 +155,16 @@ func main() {
 		}
 		rtpPort := int(rtpPortInt64)
 
-		sipServer := sip.NewSipServer(rtpPort)
-		sipServer.SetDBConfig(db)
+		//sipServer := sip.NewSipServer(rtpPort)
+		//sipServer.SetDBConfig(db)
 
 		// Set SIP server to handlers (wrap to match interface)
-		app.handlers.SetSipServer(sipServer)
+		//app.handlers.SetSipServer(sipServer)
 
 		// Start SIP server in background (pass empty targetURI to avoid auto-call)
 		go func() {
-			logger.Info("Starting SIP server", zap.Int("sip_port", sipPort), zap.Int("rtp_port", rtpPort))
 			// Only start if explicitly enabled
-			sipServer.Start(sipPort, "") // Start SIP server
+			// sipServer.Start(sipPort, "") // Start SIP server
 		}()
 
 		logger.Info("SIP server initialized", zap.Int("sip_port", sipPort), zap.Int("rtp_port", rtpPort))
@@ -365,7 +363,6 @@ func main() {
 	logger.Info("Metrics monitor routes registered", zap.String("prefix", fullMonitorPrefix))
 
 	// 19. Initialize System Listener
-	// Initialize system listener (pass in database connection)
 	listeners.InitLLMListenerWithDB(db)
 	listeners.InitBillingListenerWithDB(db)
 	listeners.InitSystemListeners()
@@ -405,7 +402,6 @@ func main() {
 	utils.Sig().Emit(models.SigInitSystemConfig, nil)
 
 	// 21.5. Start Workflow Event Listener and Scheduler
-	// Start workflow event listener
 	eventListener := workflowdef.NewWorkflowEventListener(db)
 	if err := eventListener.Start(); err != nil {
 		logger.Error("Failed to start workflow event listener", zap.Error(err))
@@ -417,8 +413,6 @@ func main() {
 	scheduler := workflowdef.GetWorkflowScheduler(db)
 	if err := scheduler.Start(); err != nil {
 		logger.Error("Failed to start workflow scheduler", zap.Error(err))
-	} else {
-		logger.Info("Workflow scheduler started")
 	}
 
 	// 22. Start HTTP/HTTPS Server

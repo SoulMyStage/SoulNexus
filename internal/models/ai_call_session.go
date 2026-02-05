@@ -8,10 +8,10 @@ import (
 
 // AICallSession AI通话会话记录
 type AICallSession struct {
-	ID        uint       `json:"id" gorm:"primaryKey"`
-	CreatedAt time.Time  `json:"createdAt" gorm:"autoCreateTime"`
-	UpdatedAt time.Time  `json:"updatedAt" gorm:"autoUpdateTime"`
-	DeletedAt *time.Time `json:"-" gorm:"index"`
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt time.Time      `json:"createdAt" gorm:"autoCreateTime"`
+	UpdatedAt time.Time      `json:"updatedAt" gorm:"autoUpdateTime"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// 关联信息
 	CallID      string `json:"callId" gorm:"size:128;index;not null"` // SIP Call-ID

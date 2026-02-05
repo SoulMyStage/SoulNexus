@@ -207,7 +207,7 @@ func CreateOrUpdateUserDevice(db *gorm.DB, userID uint, deviceID, deviceName, de
 
 // DeleteUserDevice 删除用户设备
 func DeleteUserDevice(db *gorm.DB, userID uint, deviceID string) error {
-	return db.Where("user_id = ? AND device_id = ?", userID, deviceID).
+	return db.Model(&UserDevice{}).Where("user_id = ? AND device_id = ?", userID, deviceID).
 		Update("is_active", false).Error
 }
 

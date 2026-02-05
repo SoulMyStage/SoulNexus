@@ -201,6 +201,13 @@ func AuthRequired(c *gin.Context) {
 		c.Next()
 		return
 	}
+
+	// 检查配置是否存在
+	if config.GlobalConfig == nil {
+		LingEcho.AbortWithJSONError(c, http.StatusInternalServerError, errors.New("server configuration not initialized"))
+		return
+	}
+
 	token := c.GetHeader(config.GlobalConfig.Auth.Header)
 	if token == "" {
 		token = c.Query("token")
@@ -304,7 +311,7 @@ func VerifyEncryptedPassword(encryptedPassword, storedPasswordHash string) bool 
 	now := time.Now().Unix()
 	maxAge := int64(300) // 5分钟
 	if now-timestamp > maxAge {
-		logger.Info(fmt.Printf("DEBUG: Timestamp expired. now=%d, timestamp=%d, diff=%d\n",
+		logger.Info(fmt.Sprintf("DEBUG: Timestamp expired. now=%d, timestamp=%d, diff=%d\n",
 			now, timestamp, now-timestamp))
 		return false
 	}
@@ -313,7 +320,7 @@ func VerifyEncryptedPassword(encryptedPassword, storedPasswordHash string) bool 
 	storedHash := strings.TrimPrefix(storedPasswordHash, "sha256$")
 
 	if passwordHash != storedHash {
-		logger.Info(fmt.Printf("DEBUG: Password hash mismatch. Expected: %s, Got: %s\n",
+		logger.Info(fmt.Sprintf("DEBUG: Password hash mismatch. Expected: %s, Got: %s\n",
 			storedHash, passwordHash))
 		return false
 	}
@@ -342,7 +349,7 @@ func GetUserByUID(db *gorm.DB, userID uint) (*User, error) {
 	duration := time.Since(start)
 
 	// Record database query metrics (if monitoring system is available)
-	if monitor := getMonitorFromContext(db); monitor != nil {
+	if monitor := metrics.GetGlobalMonitor(); monitor != nil {
 		monitor.RecordSQLQuery(context.Background(), "SELECT * FROM users WHERE id = ? AND enabled = ?",
 			[]interface{}{userID, true}, constants.USER_TABLE_NAME, "SELECT", duration, 1, result.Error)
 	}
@@ -360,7 +367,7 @@ func GetUserByEmail(db *gorm.DB, email string) (user *User, err error) {
 	duration := time.Since(start)
 
 	// Record database query metrics (if monitoring system is available)
-	if monitor := getMonitorFromContext(db); monitor != nil {
+	if monitor := metrics.GetGlobalMonitor(); monitor != nil {
 		monitor.RecordSQLQuery(context.Background(), "SELECT * FROM users WHERE email = ?",
 			[]interface{}{email}, constants.USER_TABLE_NAME, "SELECT", duration, 1, result.Error)
 	}
@@ -369,12 +376,6 @@ func GetUserByEmail(db *gorm.DB, email string) (user *User, err error) {
 		return nil, result.Error
 	}
 	return &val, nil
-}
-
-// getMonitorFromContext Get monitor from context (if available)
-func getMonitorFromContext(db *gorm.DB) *metrics.Monitor {
-	// Get monitor instance from global variable
-	return metrics.GetGlobalMonitor()
 }
 
 func IsExistsByEmail(db *gorm.DB, email string) bool {
@@ -491,7 +492,7 @@ func CreateUser(db *gorm.DB, email, password string) (*User, error) {
 	start := time.Now()
 	result := db.Create(&user)
 	duration := time.Since(start)
-	if monitor := getMonitorFromContext(db); monitor != nil {
+	if monitor := metrics.GetGlobalMonitor(); monitor != nil {
 		monitor.RecordSQLQuery(context.Background(), "INSERT INTO users (email, password, enabled, activated) VALUES (?, ?, ?, ?)",
 			[]interface{}{email, user.Password, true, false}, constants.USER_TABLE_NAME, "INSERT", duration, 1, result.Error)
 	}
@@ -501,7 +502,7 @@ func UpdateUserFields(db *gorm.DB, user *User, vals map[string]any) error {
 	start := time.Now()
 	result := db.Model(user).Updates(vals)
 	duration := time.Since(start)
-	if monitor := getMonitorFromContext(db); monitor != nil {
+	if monitor := metrics.GetGlobalMonitor(); monitor != nil {
 		monitor.RecordSQLQuery(context.Background(), "UPDATE users SET ... WHERE id = ?",
 			[]interface{}{user.ID}, constants.USER_TABLE_NAME, "UPDATE", duration, 1, result.Error)
 	}
@@ -521,7 +522,7 @@ func SetLastLogin(db *gorm.DB, user *User, lastIp string) error {
 	start := time.Now()
 	result := db.Model(user).Updates(vals)
 	duration := time.Since(start)
-	if monitor := getMonitorFromContext(db); monitor != nil {
+	if monitor := metrics.GetGlobalMonitor(); monitor != nil {
 		monitor.RecordSQLQuery(context.Background(), "UPDATE users SET LastLoginIP = ?, LastLogin = ? WHERE id = ?",
 			[]interface{}{lastIp, &now, user.ID}, constants.USER_TABLE_NAME, "UPDATE", duration, 1, result.Error)
 	}
@@ -914,48 +915,6 @@ func CalculateProfileComplete(user *User) int {
 	}
 
 	return percentage
-}
-
-// GetProfileCompleteMissingFields 获取缺失的资料字段
-func GetProfileCompleteMissingFields(user *User) []string {
-	var missing []string
-
-	// 基本信息检查
-	if user.DisplayName == "" {
-		missing = append(missing, "显示名称")
-	}
-	if user.FirstName == "" {
-		missing = append(missing, "名字")
-	}
-	if user.LastName == "" {
-		missing = append(missing, "姓氏")
-	}
-	if user.Avatar == "" {
-		missing = append(missing, "头像")
-	}
-
-	// 联系方式检查
-	if user.Phone == "" {
-		missing = append(missing, "手机号码")
-	}
-	if !user.EmailVerified {
-		missing = append(missing, "邮箱验证")
-	}
-
-	// 地址信息检查
-	if user.City == "" {
-		missing = append(missing, "城市")
-	}
-	if user.Region == "" {
-		missing = append(missing, "地区")
-	}
-
-	// 其他信息检查
-	if user.Gender == "" {
-		missing = append(missing, "性别")
-	}
-
-	return missing
 }
 
 // UpdateProfileComplete 更新资料完整度
