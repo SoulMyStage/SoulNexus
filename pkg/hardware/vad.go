@@ -67,18 +67,18 @@ func (v *VADDetector) CheckBargeIn(pcmData []byte, ttsPlaying bool) bool {
 	rms := calculateRMS(pcmData)
 
 	// 更严格的参数设置，防止AI声音被ASR识别
-	// 基础阈值提高到1200（原来是800）
-	baseThreshold := 1200.0
-	// TTS播放时阈值提高4倍（原来是3倍），进一步减少误触发
-	ttsThresholdMultiplier := 4.0
-	effectiveThreshold := baseThreshold * ttsThresholdMultiplier // 4800
+	// 基础阈值大幅提高到2000（原来是1200）
+	baseThreshold := 2000.0
+	// TTS播放时阈值提高6倍（原来是4倍），进一步减少误触发
+	ttsThresholdMultiplier := 6.0
+	effectiveThreshold := baseThreshold * ttsThresholdMultiplier // 12000
 
-	// 需要连续12帧超过阈值才触发（原来是8帧），更严格的检测
-	requiredFrames := 12
+	// 需要连续20帧超过阈值才触发（原来是12帧），更严格的检测
+	requiredFrames := 20
 
-	// 限流日志：每2秒最多记录一次
+	// 限流日志：每3秒最多记录一次
 	now := time.Now()
-	shouldLog := v.logger != nil && now.Sub(v.lastLogTime) >= 2*time.Second
+	shouldLog := v.logger != nil && now.Sub(v.lastLogTime) >= 3*time.Second
 
 	// 检查能量是否超过阈值
 	if rms > effectiveThreshold {
@@ -97,10 +97,11 @@ func (v *VADDetector) CheckBargeIn(pcmData []byte, ttsPlaying bool) bool {
 		// 达到连续帧数要求，触发 barge-in
 		if v.frameCounter >= requiredFrames {
 			if v.logger != nil {
-				v.logger.Info("VAD触发barge-in",
+				v.logger.Info("VAD触发barge-in（严格模式）",
 					zap.Float64("rms", rms),
 					zap.Float64("effectiveThreshold", effectiveThreshold),
 					zap.Int("frames", v.frameCounter),
+					zap.String("mode", "strict_tts_playing"),
 				)
 			}
 			v.frameCounter = 0 // 重置计数器

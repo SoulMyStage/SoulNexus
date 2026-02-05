@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	// TTSEchoSuppressionWindow TTS回音抑制窗口（毫秒）- 延长到3秒
-	ttsEchoSuppressionWindow = 3000
+	// TTSEchoSuppressionWindow TTS回音抑制窗口（毫秒）- 延长到5秒以确保完全覆盖
+	ttsEchoSuppressionWindow = 5000
 	// AudioEnergyThreshold 音频能量阈值（用于检测有效音频）- 提高阈值
-	audioEnergyThreshold = 1500
+	audioEnergyThreshold = 2000
+	// TTSPlayingGracePeriod TTS播放状态的宽限期（毫秒）- 在TTS结束后继续抑制一段时间
+	ttsPlayingGracePeriod = 1000
 )
 
 // AudioManager 音频管理器 - 解决TTS冲突问题
@@ -25,6 +27,7 @@ type AudioManager struct {
 	sampleRate      int        // 采样率
 	channels        int        // 声道数
 	echoSuppression bool       // 是否启用回音抑制
+	lastTTSEndTime  time.Time  // 最后一次TTS结束时间（用于宽限期）
 }
 
 // TTSFrame TTS音频帧
@@ -59,25 +62,37 @@ func (m *AudioManager) ProcessInputAudio(data []byte, ttsPlaying bool) ([]byte, 
 	}
 
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	echoSuppression := m.echoSuppression
+	lastTTSEndTime := m.lastTTSEndTime
+	m.mu.RUnlock()
 
-	// 如果TTS不在播放，直接处理
-	if !ttsPlaying || !m.echoSuppression {
+	// 检查是否在TTS宽限期内（TTS刚结束，仍可能有回音）
+	inGracePeriod := !lastTTSEndTime.IsZero() && time.Since(lastTTSEndTime) < ttsPlayingGracePeriod*time.Millisecond
+	effectiveTTSPlaying := ttsPlaying || inGracePeriod
+
+	// 如果TTS不在播放且不在宽限期内，直接处理
+	if !effectiveTTSPlaying || !echoSuppression {
 		return data, true
 	}
 
 	// 计算输入音频的能量
 	inputEnergy := m.calculateEnergy(data)
 
+	// TTS播放期间或宽限期内，大幅提高能量阈值，只有非常强的信号才能通过
+	ttsAudioEnergyThreshold := int64(audioEnergyThreshold * 4) // 提高到8000
+
 	// 如果能量太低，可能是静音或无效音频
-	if inputEnergy < audioEnergyThreshold {
-		m.logger.Debug("输入音频能量过低，忽略",
+	if inputEnergy < ttsAudioEnergyThreshold {
+		m.logger.Debug("TTS播放期间/宽限期：输入音频能量过低，忽略",
 			zap.Int64("energy", inputEnergy),
+			zap.Int64("threshold", ttsAudioEnergyThreshold),
+			zap.Bool("ttsPlaying", ttsPlaying),
+			zap.Bool("inGracePeriod", inGracePeriod),
 		)
 		return nil, false
 	}
 
-	// 检查是否是TTS回音
+	// 检查是否是TTS回音（更严格的检测）
 	if m.isTTSEcho(data, inputEnergy) {
 		m.logger.Debug("检测到TTS回音，过滤",
 			zap.Int64("energy", inputEnergy),
@@ -85,7 +100,26 @@ func (m *AudioManager) ProcessInputAudio(data []byte, ttsPlaying bool) ([]byte, 
 		return nil, false
 	}
 
-	// 不是回音，可以处理
+	// 额外的安全检查：即使不是明显的回音，在TTS播放期间也要更谨慎
+	// 只有能量非常高的音频才被认为是真正的用户语音
+	veryHighEnergyThreshold := int64(audioEnergyThreshold * 6) // 12000
+	if inputEnergy < veryHighEnergyThreshold {
+		m.logger.Debug("TTS播放期间/宽限期：音频能量不够高，可能是回音或噪音，过滤",
+			zap.Int64("energy", inputEnergy),
+			zap.Int64("veryHighThreshold", veryHighEnergyThreshold),
+			zap.Bool("ttsPlaying", ttsPlaying),
+			zap.Bool("inGracePeriod", inGracePeriod),
+		)
+		return nil, false
+	}
+
+	// 通过所有检查，可能是真正的用户语音
+	m.logger.Info("TTS播放期间/宽限期：检测到高能量音频，可能是用户语音",
+		zap.Int64("energy", inputEnergy),
+		zap.Int64("threshold", veryHighEnergyThreshold),
+		zap.Bool("ttsPlaying", ttsPlaying),
+		zap.Bool("inGracePeriod", inGracePeriod),
+	)
 	return data, true
 }
 
@@ -136,7 +170,7 @@ func (m *AudioManager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
 	}
 
 	// 检查更多帧以提高准确性
-	checkFrames := 15
+	checkFrames := 20 // 增加检查帧数
 	if len(m.ttsOutputBuffer) < checkFrames {
 		checkFrames = len(m.ttsOutputBuffer)
 	}
@@ -147,25 +181,25 @@ func (m *AudioManager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
 	for i := startIdx; i < len(m.ttsOutputBuffer); i++ {
 		frame := m.ttsOutputBuffer[i]
 
-		// 更严格的能量匹配 - 能量差异不能超过30%
-		energyDiff := abs64(inputEnergy - frame.Energy)
-		energyThreshold := frame.Energy * 3 / 10 // 30%
-		if energyDiff > energyThreshold {
+		// 检查时间窗口（回音通常在TTS输出后50-2000ms内）
+		timeDiff := time.Since(frame.Timestamp)
+		if timeDiff < 50*time.Millisecond || timeDiff > 2*time.Second {
 			continue
 		}
 
-		// 检查时间窗口（回音通常在TTS输出后100-3000ms内）
-		timeDiff := time.Since(frame.Timestamp)
-		if timeDiff < 100*time.Millisecond || timeDiff > 3*time.Second {
+		// 更严格的能量匹配 - 能量差异不能超过20%
+		energyDiff := abs64(inputEnergy - frame.Energy)
+		energyThreshold := frame.Energy * 2 / 10 // 20%
+		if energyDiff > energyThreshold {
 			continue
 		}
 
 		// 如果数据长度相似，进行更详细的比较
 		lengthDiff := abs(len(inputData) - len(frame.Data))
-		if lengthDiff < len(frame.Data)/3 { // 长度差异不超过33%
+		if lengthDiff < len(frame.Data)/4 { // 长度差异不超过25%
 			// 计算相似度（提高阈值）
 			similarity := m.calculateSimilarity(inputData, frame.Data)
-			if similarity > 0.6 { // 降低相似度阈值，更容易检测到回音
+			if similarity > 0.7 { // 提高相似度阈值到70%
 				m.logger.Debug("检测到回音匹配",
 					zap.Float64("similarity", similarity),
 					zap.Int64("inputEnergy", inputEnergy),
@@ -174,6 +208,17 @@ func (m *AudioManager) isTTSEcho(inputData []byte, inputEnergy int64) bool {
 				)
 				return true
 			}
+		}
+
+		// 额外检查：如果能量非常接近且时间窗口合适，也认为是回音
+		if energyDiff < frame.Energy/10 && timeDiff < 500*time.Millisecond { // 能量差异小于10%且时间在500ms内
+			m.logger.Debug("通过能量和时间检测到回音",
+				zap.Int64("inputEnergy", inputEnergy),
+				zap.Int64("frameEnergy", frame.Energy),
+				zap.Int64("energyDiff", energyDiff),
+				zap.Duration("timeDiff", timeDiff),
+			)
+			return true
 		}
 	}
 
@@ -253,6 +298,7 @@ func (m *AudioManager) Clear() {
 	defer m.mu.Unlock()
 	m.ttsOutputBuffer = m.ttsOutputBuffer[:0]
 	m.ttsOutputIndex = 0
+	m.lastTTSEndTime = time.Time{} // 重置TTS结束时间
 }
 
 // SetEchoSuppression 设置回音抑制开关
@@ -260,4 +306,13 @@ func (m *AudioManager) SetEchoSuppression(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.echoSuppression = enabled
+}
+
+// NotifyTTSEnd 通知TTS播放结束（用于宽限期计算）
+func (m *AudioManager) NotifyTTSEnd() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastTTSEndTime = time.Now()
+	m.logger.Debug("TTS播放结束，开始宽限期",
+		zap.Duration("gracePeriod", ttsPlayingGracePeriod*time.Millisecond))
 }

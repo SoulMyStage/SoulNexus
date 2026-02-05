@@ -528,6 +528,10 @@ func (p *Processor) synthesizeTTS(ctx context.Context, text string) {
 	p.stateManager.SetTTSPlaying(true)
 	defer func() {
 		p.stateManager.SetTTSPlaying(false)
+		// 通知音频管理器TTS已结束，开始宽限期
+		if p.audioManager != nil {
+			p.audioManager.NotifyTTSEnd()
+		}
 		p.logger.Info("TTS播放结束")
 		// 发送TTS结束消息
 		if err := p.writer.SendTTSEnd(); err != nil {
@@ -649,6 +653,12 @@ func (p *Processor) synthesizeTTS(ctx context.Context, text string) {
 
 			totalBytesReceived += len(data)
 
+			// 记录TTS输出到音频管理器（用于回声消除）
+			// 关键改进：在发送给硬件之前就记录，确保回音检测能及时生效
+			if p.audioManager != nil {
+				p.audioManager.RecordTTSOutput(data)
+			}
+
 			// 如果是第一个音频数据包，记录TTS准备完成时间
 			if !firstAudioSent {
 				ttsFirstAudioTime := time.Now()
@@ -658,11 +668,6 @@ func (p *Processor) synthesizeTTS(ctx context.Context, text string) {
 				p.logger.Info("TTS第一个音频包准备完成",
 					zap.Duration("prepareTime", ttsFirstAudioTime.Sub(ttsStartTime)),
 				)
-			}
-
-			// 记录TTS输出到音频管理器（用于回声消除）
-			if p.audioManager != nil {
-				p.audioManager.RecordTTSOutput(data)
 			}
 
 			// 如果是OPUS格式，需要编码PCM -> OPUS

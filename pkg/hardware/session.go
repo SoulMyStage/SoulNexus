@@ -517,32 +517,45 @@ func (s *Session) HandleAudio(data []byte) error {
 		return nil
 	}
 
-	// 如果 TTS 正在播放，使用 VAD 检测 barge-in
+	// 关键改进：TTS播放期间完全阻止ASR处理
 	if ttsPlaying {
-		// 首先使用音频管理器进行严格的回音过滤
+		// 1. 首先使用音频管理器进行严格的回音过滤
 		filteredData, shouldProcess := audioManager.ProcessInputAudio(pcmData, true)
 		if !shouldProcess {
 			// 被音频管理器过滤掉，直接返回
 			return nil
 		}
 
-		// 通过音频管理器过滤后，再使用VAD检测用户是否真的在说话
+		// 2. 即使通过了音频管理器过滤，在TTS播放期间也要非常谨慎
+		// 使用更严格的VAD检测，只有非常明确的用户语音才会中断TTS
 		if vadDetector.CheckBargeIn(filteredData, true) {
-			s.config.Logger.Info("检测到用户说话，中断 TTS")
+			s.config.Logger.Info("检测到强烈的用户说话信号，中断 TTS")
+
 			// 优雅地取消 TTS 播放：先设置状态，再取消context
 			s.stateManager.SetTTSPlaying(false)
 			s.stateManager.CancelTTS()
+
+			// 通知音频管理器TTS被中断
+			if audioManager != nil {
+				audioManager.NotifyTTSEnd()
+			}
 
 			// 发送TTS结束消息给前端
 			if err := s.messageWriter.SendTTSEnd(); err != nil {
 				s.config.Logger.Warn("发送TTS结束消息失败", zap.Error(err))
 			}
 
+			// 等待一小段时间让TTS完全停止，避免残留音频干扰
+			time.Sleep(200 * time.Millisecond)
+
 			// 继续处理音频（用户开始说话了）
 			return s.asrService.SendAudio(filteredData)
 		}
 
-		// TTS 播放中且未检测到用户说话，不发送到ASR
+		// TTS 播放中且未检测到明确的用户说话，完全不发送到ASR
+		s.config.Logger.Debug("TTS播放中，音频被过滤",
+			zap.Int("dataSize", len(pcmData)),
+			zap.Int("filteredSize", len(filteredData)))
 		return nil
 	}
 
@@ -551,6 +564,9 @@ func (s *Session) HandleAudio(data []byte) error {
 	processedData, shouldProcess := audioManager.ProcessInputAudio(pcmData, false)
 	if !shouldProcess {
 		// 被过滤（可能是TTS回音或无效音频）
+		s.config.Logger.Debug("音频被过滤",
+			zap.Int("dataSize", len(pcmData)),
+			zap.String("reason", "audio_manager_filter"))
 		return nil
 	}
 
