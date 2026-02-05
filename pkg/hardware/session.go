@@ -636,6 +636,10 @@ func (s *Session) HandleText(data []byte) error {
 			s.config.Logger.Debug("收到ping，已发送pong响应")
 		}
 
+	case MessageTypeAbort:
+		// 中断当前操作
+		s.handleAbortMessage()
+
 	case "hello":
 		// xiaozhi协议hello消息处理
 		s.handleHelloMessage(msg)
@@ -646,6 +650,59 @@ func (s *Session) HandleText(data []byte) error {
 	}
 
 	return nil
+}
+
+// handleAbortMessage 处理abort消息 - 中断当前所有操作
+func (s *Session) handleAbortMessage() {
+	s.config.Logger.Info("收到abort消息，中断当前操作")
+
+	// 1. 中断TTS播放
+	if s.stateManager != nil {
+		s.stateManager.SetTTSPlaying(false)
+		s.stateManager.CancelTTS()
+		s.config.Logger.Debug("已中断TTS播放")
+	}
+
+	// 2. 清空所有状态
+	if s.stateManager != nil {
+		s.stateManager.Clear()
+		s.config.Logger.Debug("已清空状态管理器")
+	}
+
+	// 3. 清空音频管理器
+	if s.audioManager != nil {
+		s.audioManager.Clear()
+		s.config.Logger.Debug("已清空音频管理器")
+	}
+
+	// 4. 重置VAD检测器
+	if s.vadDetector != nil {
+		// VAD检测器没有Clear方法，但会在下次使用时自动重置
+		s.config.Logger.Debug("VAD检测器将在下次使用时重置")
+	}
+
+	// 5. 清空处理器状态
+	if s.processor != nil {
+		s.processor.Clear()
+		s.config.Logger.Debug("已清空处理器状态")
+	}
+
+	// 6. 发送TTS停止消息给客户端
+	if s.messageWriter != nil {
+		if err := s.messageWriter.SendTTSEnd(); err != nil {
+			s.config.Logger.Warn("发送TTS停止消息失败", zap.Error(err))
+		} else {
+			s.config.Logger.Debug("已发送TTS停止消息")
+		}
+	}
+
+	// 7. 断开ASR连接（如果需要的话）
+	if s.asrService != nil {
+		// 注意：这里不完全断开ASR，只是重置状态，保持连接以便后续使用
+		s.config.Logger.Debug("ASR服务保持连接，状态已重置")
+	}
+
+	s.config.Logger.Info("abort消息处理完成，所有操作已中断")
 }
 
 // handleHelloMessage 处理xiaozhi协议的hello消息

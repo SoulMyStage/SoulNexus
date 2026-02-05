@@ -20,6 +20,7 @@ const (
 	MessageTypeSessionCleared = "session_cleared"
 	MessageTypePing           = "ping"
 	MessageTypePong           = "pong"
+	MessageTypeAbort          = "abort"
 )
 
 const (
