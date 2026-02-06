@@ -14,7 +14,8 @@ import (
 
 const (
 	// WriterBufferSize 消息写入器缓冲区大小
-	WriterBufferSize = 100
+	// 设置为200以应对TTS流式输出的短时激增（60ms/帧 × 200 = 12秒缓冲）
+	WriterBufferSize = 200
 	// TTSPreBufferCount TTS预缓冲包数量（前N个包直接发送）
 	TTSPreBufferCount = 5
 	// TTSFrameDuration TTS帧时长（毫秒）
