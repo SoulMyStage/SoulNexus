@@ -15,20 +15,21 @@ import (
 
 // LLMService LLM服务实现
 type LLMService struct {
-	ctx            context.Context
-	credential     *models.UserCredential
-	systemPrompt   string
-	model          string
-	temperature    float64
-	maxTokens      int
-	provider       llm.LLMProvider
-	errorHandler   *ErrHandler
-	logger         *zap.Logger
-	speakerManager *speaker.Manager             // 新增：发音人管理器
-	speakerConfig  *speaker.SpeakerConfig       // 新增：发音人配置
-	switchCallback func(speakerID string) error // 新增：切换回调
-	mu             sync.RWMutex
-	closed         bool
+	ctx             context.Context
+	credential      *models.UserCredential
+	systemPrompt    string
+	model           string
+	temperature     float64
+	maxTokens       int
+	provider        llm.LLMProvider
+	errorHandler    *ErrHandler
+	logger          *zap.Logger
+	speakerManager  *speaker.Manager             // 新增：发音人管理器
+	speakerConfig   *speaker.SpeakerConfig       // 新增：发音人配置
+	switchCallback  func(speakerID string) error // 新增：切换回调
+	goodbyeCallback func() error                 // 新增：goodbye回调
+	mu              sync.RWMutex
+	closed          bool
 }
 
 // NewLLMService 创建LLM服务
@@ -75,6 +76,21 @@ func (s *LLMService) SetSpeakerManager(manager *speaker.Manager, switchCallback 
 
 	// 注册发音人切换工具
 	s.registerSpeakerSwitchTool()
+}
+
+// SetGoodbyeCallback 设置goodbye回调
+func (s *LLMService) SetGoodbyeCallback(goodbyeCallback func() error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.goodbyeCallback = goodbyeCallback
+
+	s.logger.Info("设置goodbye回调",
+		zap.Bool("callbackIsNil", goodbyeCallback == nil),
+	)
+
+	// 注册goodbye工具
+	s.registerGoodbyeTool()
 }
 
 // LLMStreamResponse 流式响应结构
@@ -361,19 +377,22 @@ func (s *LLMService) Query(ctx context.Context, text string) (string, error) {
 	return response, nil
 }
 
-// buildEnhancedSystemPrompt 构建增强的系统提示词（包含最大token限制和发音人切换功能）
+// buildEnhancedSystemPrompt 构建增强的系统提示词（包含最大token限制、发音人切换功能和goodbye功能）
 func (s *LLMService) buildEnhancedSystemPrompt() string {
 	basePrompt := s.systemPrompt
 
 	// 导入发音人切换功能提示词
 	speakerPrompt := getSpeakerSystemPrompt()
 
+	// 导入goodbye功能提示词
+	goodbyePrompt := getGoodbyeSystemPrompt()
+
 	// 构建完整的系统提示词
 	var enhancedPrompt string
 	if basePrompt != "" {
-		enhancedPrompt = basePrompt + "\n\n" + speakerPrompt
+		enhancedPrompt = basePrompt + "\n\n" + speakerPrompt + "\n\n" + goodbyePrompt
 	} else {
-		enhancedPrompt = speakerPrompt
+		enhancedPrompt = speakerPrompt + "\n\n" + goodbyePrompt
 	}
 
 	// 如果设置了最大token，追加限制提示
@@ -451,6 +470,48 @@ func getSpeakerSystemPrompt() string {
 - 切换到童声后："好哒好哒，我现在用小朋友的声音跟你说话~"
 
 请准确识别用户的真实意图，只在明确的切换请求时才调用switch_speaker函数。根据用户的具体要求选择最合适的发音人类型。
+`
+}
+
+// getGoodbyeSystemPrompt 获取goodbye相关的系统提示词
+func getGoodbyeSystemPrompt() string {
+	return `
+## 智能告别检测功能
+
+你具备通过Function Calling智能检测用户告别意图的能力。当用户表达结束对话的意图时，你需要调用goodbye函数。
+
+### 何时调用goodbye函数：
+
+**应该调用的情况：**
+- "再见" / "拜拜" / "bye" / "goodbye"
+- "我要走了" / "我先走了" / "我要离开了"
+- "结束对话" / "结束聊天" / "停止对话"
+- "挂断" / "断开连接" / "关闭"
+- "不聊了" / "不说了" / "就这样吧"
+- "谢谢，再见" / "好的，拜拜"
+- "时间到了，我要走了"
+- "今天就聊到这里"
+
+**不应该调用的情况：**
+- "再见面" / "下次再见面" （表示未来见面，不是告别）
+- "再见到你真好" （表达高兴，不是告别）
+- "告别过去" / "告别昨天" （比喻用法，不是对话告别）
+- "结束这个话题" （只是换话题，不是结束对话）
+- "停止播放音乐" （停止某个功能，不是告别）
+
+### 调用流程：
+1. 检测到用户告别意图
+2. 调用goodbye函数
+3. 返回温暖的告别语
+4. 系统在TTS播放完告别语后自动断开连接
+
+### 告别语示例：
+- 标准告别："好的，再见！"
+- 温暖告别："好的，很高兴和您聊天，再见！"
+- 感谢告别："谢谢您的陪伴，再见！"
+- 祝福告别："祝您生活愉快，再见！"
+
+请准确识别用户的真实意图，只在明确的告别请求时才调用goodbye函数。
 `
 }
 
@@ -576,6 +637,90 @@ func (s *LLMService) handleSpeakerSwitch(args map[string]interface{}) (string, e
 	message := fmt.Sprintf("已成功切换到%s", speakerName)
 	if reason != "" {
 		message += fmt.Sprintf("（%s）", reason)
+	}
+
+	return message, nil
+}
+
+// registerGoodbyeTool 注册goodbye工具
+func (s *LLMService) registerGoodbyeTool() {
+	if s.provider == nil {
+		s.logger.Warn("无法注册goodbye工具：provider为空")
+		return
+	}
+
+	s.logger.Info("准备注册goodbye工具",
+		zap.String("providerType", fmt.Sprintf("%T", s.provider)),
+	)
+
+	// 定义工具参数
+	parameters := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"reason": map[string]interface{}{
+				"type":        "string",
+				"description": "告别的原因（可选）",
+			},
+		},
+		"required": []string{},
+	}
+
+	// 定义回调函数
+	callback := func(args map[string]interface{}) (string, error) {
+		s.logger.Info("goodbye工具被调用", zap.Any("args", args))
+		return s.handleGoodbye(args)
+	}
+
+	// 注册工具
+	s.provider.RegisterFunctionTool(
+		"goodbye",
+		"当用户表达告别、再见、结束对话等意图时调用此函数。例如：'再见'、'拜拜'、'我要走了'、'结束对话'、'挂断'等。调用此函数后，系统会在TTS播放完告别语后自动断开连接。",
+		parameters,
+		callback,
+	)
+
+	// 验证工具是否注册成功
+	registeredTools := s.provider.ListFunctionTools()
+	s.logger.Info("已注册goodbye工具",
+		zap.Strings("allRegisteredTools", registeredTools),
+		zap.Bool("goodbyeRegistered", contains(registeredTools, "goodbye")),
+	)
+}
+
+// handleGoodbye 处理goodbye调用
+func (s *LLMService) handleGoodbye(args map[string]interface{}) (string, error) {
+	s.mu.RLock()
+	goodbyeCallback := s.goodbyeCallback
+	s.mu.RUnlock()
+
+	if goodbyeCallback == nil {
+		return "", fmt.Errorf("goodbye回调未初始化")
+	}
+
+	// 获取参数
+	reason, _ := args["reason"].(string)
+
+	s.logger.Info("AI检测到用户告别意图",
+		zap.String("reason", reason),
+	)
+
+	// 调用goodbye回调（异步执行，避免阻塞LLM响应）
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("goodbye回调发生panic", zap.Any("panic", r))
+			}
+		}()
+
+		if err := goodbyeCallback(); err != nil {
+			s.logger.Error("goodbye回调执行失败", zap.Error(err))
+		}
+	}()
+
+	// 返回告别消息（这将被TTS合成并播放）
+	message := "好的，再见！"
+	if reason != "" {
+		message = fmt.Sprintf("好的，%s。再见！", reason)
 	}
 
 	return message, nil

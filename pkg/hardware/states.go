@@ -42,6 +42,7 @@ type HardwareStateManager struct {
 	processing                  bool
 	ttsPlaying                  bool
 	fatalError                  bool
+	goodbyePending              bool // 新增：goodbye待处理标志
 	lastASRText                 string
 	lastProcessedText           string
 	lastProcessedCumulativeText string
@@ -103,6 +104,20 @@ func (m *HardwareStateManager) IsFatalError() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.fatalError
+}
+
+// SetGoodbyePending 设置goodbye待处理状态
+func (m *HardwareStateManager) SetGoodbyePending(pending bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.goodbyePending = pending
+}
+
+// IsGoodbyePending 检查是否有goodbye待处理
+func (m *HardwareStateManager) IsGoodbyePending() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.goodbyePending
 }
 
 // CanProcess check if can handle new request
@@ -258,6 +273,7 @@ func (m *HardwareStateManager) Clear() {
 	m.processing = false
 	m.ttsPlaying = false
 	m.fatalError = false
+	m.goodbyePending = false // 新增：清空goodbye待处理标志
 	m.lastASRText = ""
 	m.lastProcessedText = ""
 	m.lastProcessedCumulativeText = ""

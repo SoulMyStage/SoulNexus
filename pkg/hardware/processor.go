@@ -189,6 +189,9 @@ type Processor struct {
 
 	// 录音会话支持 - 新增
 	recordingSession interface{} // 录音会话接口，避免循环依赖
+
+	// WebSocket会话支持 - 新增：用于goodbye功能
+	session interface{} // 会话接口，避免循环依赖
 }
 
 // NewProcessor 创建消息处理器
@@ -231,7 +234,10 @@ func NewProcessor(
 	// 设置LLM服务的发音人管理器和切换回调
 	llmService.SetSpeakerManager(speakerManager, processor.switchSpeaker)
 
-	processor.logger.Info("已设置LLM服务的发音人管理器",
+	// 设置goodbye回调
+	llmService.SetGoodbyeCallback(processor.handleGoodbye)
+
+	processor.logger.Info("已设置LLM服务的发音人管理器和goodbye回调",
 		zap.String("speakerManagerType", fmt.Sprintf("%T", speakerManager)),
 		zap.String("currentSpeaker", speakerManager.GetCurrentSpeaker()),
 	)
@@ -533,8 +539,8 @@ func (p *Processor) synthesizeTTS(ctx context.Context, text string) {
 			p.audioManager.NotifyTTSEnd()
 		}
 		p.logger.Info("TTS播放结束")
-		// 发送TTS结束消息
-		if err := p.writer.SendTTSEnd(); err != nil {
+		// 发送TTS结束消息并检查goodbye状态
+		if err := p.writer.SendTTSEndWithGoodbyeCheck(p.stateManager, p.session); err != nil {
 			p.logger.Error("发送TTS结束消息失败", zap.Error(err))
 		}
 	}()
@@ -945,6 +951,13 @@ func (p *Processor) SetRecordingSession(session interface{}) {
 	p.recordingSession = session
 }
 
+// SetSession 设置WebSocket会话（用于goodbye功能）
+func (p *Processor) SetSession(session interface{}) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.session = session
+}
+
 // SetAIResponseCallback 设置AI回复回调函数
 func (p *Processor) SetAIResponseCallback(callback func(text string)) {
 	p.mu.Lock()
@@ -1131,6 +1144,16 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 		zap.Int("firstSegmentMaxLen", config.FirstSegmentMaxLen),
 		zap.Int("minSplitLength", config.MinSplitLength),
 	)
+
+	return nil
+}
+
+// handleGoodbye 处理goodbye功能调用
+func (p *Processor) handleGoodbye() error {
+	p.logger.Info("收到goodbye调用，准备在TTS完成后断开连接")
+
+	// 设置goodbye标志，在TTS完成后断开连接
+	p.stateManager.SetGoodbyePending(true)
 
 	return nil
 }

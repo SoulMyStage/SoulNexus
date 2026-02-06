@@ -265,6 +265,9 @@ func NewSession(config *SessionConfig) (*Session, error) {
 		},
 	)
 
+	// 设置processor的session引用（用于goodbye功能）
+	processor.SetSession(session)
+
 	return session, nil
 }
 
@@ -451,6 +454,22 @@ func (s *Session) stopWithReason(reason string) error {
 	// 关闭消息写入器
 	if s.messageWriter != nil {
 		s.messageWriter.Close()
+	}
+
+	// 显式关闭WebSocket连接（参考xiaozhi-server）
+	if s.config.Conn != nil {
+		// 发送正常关闭消息
+		closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+		if err := s.config.Conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(time.Second)); err != nil {
+			s.config.Logger.Debug("发送WebSocket关闭消息失败", zap.Error(err))
+		}
+
+		// 关闭连接
+		if err := s.config.Conn.Close(); err != nil {
+			s.config.Logger.Debug("关闭WebSocket连接时出错", zap.Error(err))
+		} else {
+			s.config.Logger.Debug("WebSocket连接已关闭")
+		}
 	}
 
 	// 清空状态

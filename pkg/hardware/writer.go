@@ -349,6 +349,49 @@ func (w *Writer) SendTTSEnd() error {
 	})
 }
 
+// SendTTSEndWithGoodbyeCheck 发送TTS结束消息并检查goodbye状态
+func (w *Writer) SendTTSEndWithGoodbyeCheck(stateManager *HardwareStateManager, session interface{}) error {
+	// 先发送TTS结束消息
+	if err := w.SendTTSEnd(); err != nil {
+		return err
+	}
+
+	// 检查是否有goodbye待处理
+	if stateManager != nil && stateManager.IsGoodbyePending() {
+		w.logger.Info("检测到goodbye待处理，立即断开连接（参考xiaozhi-server逻辑）")
+
+		// 参考xiaozhi-server：在发送TTS stop消息后立即断开连接
+		// 不需要等待，让硬件客户端自己处理播放完成和进入待机
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					w.logger.Error("goodbye断开连接时发生panic", zap.Any("panic", r))
+				}
+			}()
+
+			// 很短的延迟，确保TTS stop消息已发送
+			time.Sleep(50 * time.Millisecond)
+
+			// 立即断开连接
+			if session != nil {
+				if s, ok := session.(interface{ Stop() error }); ok {
+					if err := s.Stop(); err != nil {
+						w.logger.Error("goodbye断开连接失败", zap.Error(err))
+					} else {
+						w.logger.Info("goodbye断开连接成功")
+					}
+				} else {
+					w.logger.Warn("会话对象不支持Stop方法")
+				}
+			} else {
+				w.logger.Warn("会话对象为空，无法断开连接")
+			}
+		}()
+	}
+
+	return nil
+}
+
 // SendWelcome 发送Welcome消息（xiaozhi协议）
 func (w *Writer) SendWelcome(audioFormat string, sampleRate, channels int, features map[string]interface{}) (string, error) {
 	// 生成会话ID（使用时间戳）
