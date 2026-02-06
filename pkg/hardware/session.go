@@ -285,8 +285,8 @@ func (s *Session) Start() error {
 		return NewRecoverableError("Session", "连接ASR服务失败", err)
 	}
 
-	// 等待ASR连接建立
-	time.Sleep(DefaultASRConnectionDelay)
+	// 等待ASR连接建立（动态检查，最多等待1秒）
+	s.waitForASRConnection(1 * time.Second)
 
 	// 开始录音（如果录音管理器可用）
 	if s.recordingManager != nil && s.config.UserID > 0 && s.config.AssistantID > 0 {
@@ -339,6 +339,29 @@ func (s *Session) Start() error {
 	go s.messageLoop()
 
 	return nil
+}
+
+// waitForASRConnection 等待ASR连接建立（动态检查）
+func (s *Session) waitForASRConnection(maxWait time.Duration) {
+	checkInterval := 50 * time.Millisecond
+	elapsed := time.Duration(0)
+	startTime := time.Now()
+
+	for elapsed < maxWait {
+		if s.asrService.IsConnected() {
+			s.config.Logger.Info("ASR连接已建立",
+				zap.Duration("elapsed", time.Since(startTime)),
+			)
+			return
+		}
+		time.Sleep(checkInterval)
+		elapsed += checkInterval
+	}
+
+	// 超时后记录警告，但继续执行（ASR有自动重连机制）
+	s.config.Logger.Warn("ASR连接未在预期时间内建立，继续执行（将自动重连）",
+		zap.Duration("maxWait", maxWait),
+	)
 }
 
 // Stop 停止会话
@@ -911,8 +934,8 @@ func (s *Session) reinitializeServices(sampleRate, channels int) error {
 	s.asrService = newASRService
 	s.config.Logger.Info("ASR服务已重新初始化")
 
-	// 等待ASR连接建立
-	time.Sleep(DefaultASRConnectionDelay)
+	// 等待ASR连接建立（动态检查）
+	s.waitForASRConnection(1 * time.Second)
 
 	// 重新初始化TTS服务（使用硬件的采样率）
 	s.config.Logger.Info("重新初始化TTS服务",
