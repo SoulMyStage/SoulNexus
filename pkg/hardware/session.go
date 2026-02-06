@@ -9,15 +9,22 @@ import (
 	"time"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
+	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/code-100-precent/LingEcho/pkg/media/encoder"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
+	"github.com/code-100-precent/LingEcho/pkg/synthesizer"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-// Session 语音会话实现
+const (
+	// DefaultTTSSpeedRatio 默认TTS语速倍率
+	DefaultTTSSpeedRatio = 0.8 // 硬件端使用0.8（减速20%）
+)
+
+// Session hardware websocket session
 type Session struct {
 	config           *SessionConfig
 	ctx              context.Context
@@ -30,31 +37,27 @@ type Session struct {
 	messageWriter    *Writer
 	processor        *Processor
 	audioManager     *AudioManager
-	vadDetector      *VADDetector // VAD 检测器用于 barge-in
+	vadDetector      *VADDetector // VAD detect barge-in
 	mu               sync.RWMutex
 	active           bool
 	recordingManager *RecordingManager
 	recordingSession *RecordingSession
 	db               *gorm.DB
-
-	// 音频格式配置（从硬件获取）
-	audioFormat string // opus, pcm, etc.
-	sampleRate  int    // 8000, 16000, etc.
-	channels    int    // 1, 2
-
-	// 音频编解码器
-	opusDecoder media.EncoderFunc // OPUS -> PCM (for ASR)
-	opusEncoder media.EncoderFunc // PCM -> OPUS (for TTS)
+	audioFormat      string            // opus, pcm, etc. // get from hardware by websocket
+	sampleRate       int               // 8000, 16000, etc.
+	channels         int               // 1, 2
+	opusDecoder      media.EncoderFunc // OPUS -> PCM (for ASR)
+	opusEncoder      media.EncoderFunc // PCM -> OPUS (for TTS)
 }
 
-// NewSession 创建新的语音会话
+// NewSession create new hardware session
 func NewSession(config *SessionConfig) (*Session, error) {
 	if config == nil {
-		return nil, NewRecoverableError("Session", "配置不能为空", nil)
+		return nil, NewRecoverableError("Session", "config can not be empty", nil)
 	}
 
 	if config.Conn == nil {
-		return nil, NewRecoverableError("Session", "WebSocket连接不能为空", nil)
+		return nil, NewRecoverableError("Session", "websocket connection can not be empty", nil)
 	}
 
 	if config.Logger == nil {
@@ -66,22 +69,15 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	}
 
 	ctx, cancel := context.WithCancel(config.Context)
-
-	// 创建状态管理器
 	stateManager := NewHardwareStateManager()
-
-	// 创建错误处理器
 	errorHandler := NewErrHandler(config.Logger)
-
-	// 创建服务工厂
 	transcriberFactory := recognizer.GetGlobalFactory()
-	serviceFactory := NewServiceFactory(transcriberFactory, config.Logger)
 
 	// 创建消息写入器
 	messageWriter := NewWriter(config.Conn, config.Logger)
 
 	// 创建ASR服务（使用默认配置，hello消息后会重新初始化）
-	transcriber, err := serviceFactory.CreateASR(config.Credential, config.Language, 0, 0)
+	transcriber, err := CreateASR(transcriberFactory, config.Credential, config.Language, 0, 0)
 	if err != nil {
 		cancel()
 		return nil, NewRecoverableError("Session", "创建ASR服务失败", err)
@@ -97,7 +93,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	)
 
 	// 创建TTS服务（使用默认配置，hello消息后会重新初始化）
-	synthesizer, err := serviceFactory.CreateTTS(config.Credential, config.Speaker, 0, 0)
+	synthesizer, err := CreateTTS(config.Credential, config.Speaker, 0, 0)
 	if err != nil {
 		cancel()
 		return nil, NewRecoverableError("Session", "创建TTS服务失败", err)
@@ -113,7 +109,7 @@ func NewSession(config *SessionConfig) (*Session, error) {
 	)
 
 	// 创建LLM服务
-	llmProvider, err := serviceFactory.CreateLLM(ctx, config.Credential, config.SystemPrompt)
+	llmProvider, err := CreateLLM(ctx, config.Credential, config.SystemPrompt)
 	if err != nil {
 		cancel()
 		return nil, NewRecoverableError("Session", "创建LLM服务失败", err)
@@ -876,7 +872,6 @@ func (s *Session) initializeOpusCodecs(sampleRate, channels int, frameDuration s
 // reinitializeServices 重新初始化ASR和TTS服务
 func (s *Session) reinitializeServices(sampleRate, channels int) error {
 	transcriberFactory := recognizer.GetGlobalFactory()
-	serviceFactory := NewServiceFactory(transcriberFactory, s.config.Logger)
 
 	// 停止旧的ASR服务
 	s.config.Logger.Info("停止旧的ASR服务")
@@ -889,7 +884,7 @@ func (s *Session) reinitializeServices(sampleRate, channels int) error {
 		zap.Int("sampleRate", sampleRate),
 		zap.Int("channels", channels),
 	)
-	transcriber, err := serviceFactory.CreateASR(s.config.Credential, s.config.Language, sampleRate, channels)
+	transcriber, err := CreateASR(transcriberFactory, s.config.Credential, s.config.Language, sampleRate, channels)
 	if err != nil {
 		return fmt.Errorf("重新初始化ASR服务失败: %w", err)
 	}
@@ -942,7 +937,7 @@ func (s *Session) reinitializeServices(sampleRate, channels int) error {
 		zap.Int("sampleRate", sampleRate),
 		zap.Int("channels", channels),
 	)
-	synthesizer, err := serviceFactory.CreateTTS(s.config.Credential, s.config.Speaker, sampleRate, channels)
+	synthesizer, err := CreateTTS(s.config.Credential, s.config.Speaker, sampleRate, channels)
 	if err != nil {
 		return fmt.Errorf("重新初始化TTS服务失败: %w", err)
 	}
@@ -1031,4 +1026,135 @@ func (s *Session) messageLoop() {
 			}
 		}
 	}
+}
+
+// CreateASR 创建ASR服务
+func CreateASR(transcriberFactory *recognizer.DefaultTranscriberFactory, credential *models.UserCredential, language string, sampleRate, channels int) (recognizer.TranscribeService, error) {
+	asrProvider := credential.GetASRProvider()
+	if asrProvider == "" {
+		return nil, NewRecoverableError("Factory", "ASR provider未配置", nil)
+	}
+
+	normalizedProvider := recognizer.NormalizeProvider(asrProvider)
+
+	// 构建配置
+	asrConfig := make(map[string]interface{})
+	asrConfig["provider"] = normalizedProvider
+	asrConfig["language"] = language
+
+	if credential.AsrConfig != nil {
+		for key, value := range credential.AsrConfig {
+			asrConfig[key] = value
+		}
+	}
+
+	// 设置音频参数
+	if sampleRate > 0 {
+		asrConfig["sampleRate"] = sampleRate
+		asrConfig["sample_rate"] = sampleRate
+	}
+	if channels > 0 {
+		asrConfig["channels"] = channels
+	}
+
+	// 验证提供商支持
+	vendor := recognizer.GetVendor(normalizedProvider)
+	if transcriberFactory != nil && !transcriberFactory.IsVendorSupported(vendor) {
+		supported := transcriberFactory.GetSupportedVendors()
+		return nil, NewRecoverableError("Factory", fmt.Sprintf("不支持的ASR提供商: %s, 支持的提供商: %v", asrProvider, supported), nil)
+	}
+
+	// 解析配置
+	config, err := recognizer.NewTranscriberConfigFromMap(normalizedProvider, asrConfig, language)
+	if err != nil {
+		return nil, NewRecoverableError("Factory", "解析ASR配置失败", err)
+	}
+
+	// 创建服务
+	if transcriberFactory == nil {
+		transcriberFactory = recognizer.GetGlobalFactory()
+	}
+	asrService, err := transcriberFactory.CreateTranscriber(config)
+	if err != nil {
+		return nil, NewRecoverableError("Factory", "创建ASR服务失败", err)
+	}
+
+	return asrService, nil
+}
+
+// CreateTTS 创建TTS服务
+func CreateTTS(credential *models.UserCredential, speaker string, sampleRate, channels int) (synthesizer.SynthesisService, error) {
+	ttsProvider := credential.GetTTSProvider()
+	if ttsProvider == "" {
+		return nil, NewRecoverableError("Factory", "TTS provider未配置", nil)
+	}
+
+	normalizedProvider := recognizer.NormalizeProvider(ttsProvider)
+
+	ttsConfig := make(synthesizer.TTSCredentialConfig)
+	ttsConfig["provider"] = normalizedProvider
+
+	if credential.TtsConfig != nil {
+		for key, value := range credential.TtsConfig {
+			ttsConfig[key] = value
+		}
+	}
+
+	if _, exists := ttsConfig["voiceType"]; !exists && speaker != "" {
+		ttsConfig["voiceType"] = speaker
+	}
+	if _, exists := ttsConfig["voice_type"]; !exists && speaker != "" {
+		ttsConfig["voice_type"] = speaker
+	}
+
+	// 设置音频参数
+	if sampleRate > 0 {
+		ttsConfig["sampleRate"] = sampleRate
+		ttsConfig["sample_rate"] = sampleRate
+	}
+	if channels > 0 {
+		ttsConfig["channels"] = channels
+	}
+
+	// 设置默认语速
+	setDefaultTTSSpeed(ttsConfig, normalizedProvider)
+
+	ttsService, err := synthesizer.NewSynthesisServiceFromCredential(ttsConfig)
+	if err != nil {
+		return nil, NewRecoverableError("Factory", "创建TTS服务失败", err)
+	}
+	return ttsService, nil
+}
+
+// setDefaultTTSSpeed 设置默认TTS语速
+func setDefaultTTSSpeed(ttsConfig synthesizer.TTSCredentialConfig, provider string) {
+	// 检查是否已经设置了语速
+	if _, exists := ttsConfig["speedRatio"]; exists {
+		return
+	}
+	if _, exists := ttsConfig["speed_ratio"]; exists {
+		return
+	}
+	if _, exists := ttsConfig["speed"]; exists {
+		return
+	}
+
+	// 根据提供商设置默认语速
+	switch provider {
+	case "openai":
+		ttsConfig["speed"] = DefaultTTSSpeedRatio
+	default:
+		// 大多数提供商使用 speedRatio
+		ttsConfig["speedRatio"] = DefaultTTSSpeedRatio
+	}
+}
+
+// CreateLLM 创建LLM服务
+func CreateLLM(ctx context.Context, credential *models.UserCredential, systemPrompt string) (llm.LLMProvider, error) {
+	provider, err := llm.NewLLMProvider(ctx, credential, systemPrompt)
+	if err != nil {
+		return nil, NewRecoverableError("Factory", "创建LLM服务失败", err)
+	}
+
+	return provider, nil
 }

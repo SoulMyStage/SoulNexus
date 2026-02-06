@@ -1,6 +1,7 @@
 package hardware
 
 import (
+	"errors"
 	"strings"
 	"sync"
 
@@ -13,7 +14,7 @@ type ErrHandler struct {
 	mu     sync.RWMutex
 }
 
-// NewHandler create error handler
+// NewErrHandler create error handler
 func NewErrHandler(logger *zap.Logger) *ErrHandler {
 	return &ErrHandler{
 		logger: logger,
@@ -27,7 +28,8 @@ func (h *ErrHandler) IsFatal(err error) bool {
 	}
 
 	// check if it's our unified error type
-	if e, ok := err.(*Error); ok {
+	var e *Error
+	if errors.As(err, &e) {
 		return e.Type == ErrorTypeFatal
 	}
 
@@ -67,7 +69,8 @@ func (h *ErrHandler) IsTransient(err error) bool {
 	}
 
 	// check if it's our unified error type
-	if e, ok := err.(*Error); ok {
+	var e *Error
+	if errors.As(err, &e) {
 		return e.Type == ErrorTypeTransient
 	}
 
@@ -94,14 +97,15 @@ func (h *ErrHandler) IsTransient(err error) bool {
 	return false
 }
 
-// Classify classify error type
+// Classify error type
 func (h *ErrHandler) Classify(err error, service string) *Error {
 	if err == nil {
 		return nil
 	}
 
 	// if already unified error type, return directly
-	if e, ok := err.(*Error); ok {
+	var e *Error
+	if errors.As(err, &e) {
 		return e
 	}
 

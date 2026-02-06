@@ -12,7 +12,6 @@ import (
 	"github.com/code-100-precent/LingEcho/pkg/hardware/speaker"
 	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/media"
-	"github.com/code-100-precent/LingEcho/pkg/recognizer"
 	"github.com/code-100-precent/LingEcho/pkg/synthesizer"
 	"go.uber.org/zap"
 )
@@ -174,7 +173,6 @@ type Processor struct {
 	messages       []llm.Message
 	synthesizer    synthesizer.SynthesisService // 用于获取音频格式
 	credential     *models.UserCredential       // 新增：用于重新创建TTS服务
-	serviceFactory *ServiceFactory              // 新增：服务工厂
 	encoderPool    *EncoderPool                 // 新增：编码器线程池
 
 	// OPUS编码相关（用于硬件协议）
@@ -207,9 +205,6 @@ func NewProcessor(
 	audioManager *AudioManager,
 	credential *models.UserCredential,
 ) *Processor {
-	transcriberFactory := recognizer.GetGlobalFactory()
-	serviceFactory := NewServiceFactory(transcriberFactory, logger)
-
 	speakerManager := speaker.NewManager(logger)
 
 	processor := &Processor{
@@ -225,7 +220,6 @@ func NewProcessor(
 		messages:       make([]llm.Message, 0),
 		synthesizer:    synthesizer,
 		credential:     credential,
-		serviceFactory: serviceFactory,
 		audioFormat:    "opus",
 		sampleRate:     16000,
 		channels:       1,
@@ -1096,7 +1090,7 @@ func (p *Processor) switchSpeaker(speakerID string) error {
 		}
 	}()
 
-	newSynthesizer, err = p.serviceFactory.CreateTTS(p.credential, speakerID, p.sampleRate, p.channels)
+	newSynthesizer, err = CreateTTS(p.credential, speakerID, p.sampleRate, p.channels)
 	if err != nil {
 		return fmt.Errorf("创建新TTS synthesizer失败: %w", err)
 	}
