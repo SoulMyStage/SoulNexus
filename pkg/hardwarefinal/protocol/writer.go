@@ -38,11 +38,13 @@ type HardwareWriter struct {
 
 // ttsFlowControl TTS流控状态
 type ttsFlowControl struct {
-	packetCount   int           // 已发送包数量
-	startTime     time.Time     // 开始时间
-	lastSendTime  time.Time     // 上次实际发送时间
-	sendDelay     time.Duration // 固定延迟（如果>0则使用固定延迟，否则使用时间同步）
-	frameDuration time.Duration // 帧时长
+	packetCount   int                // 已发送包数量
+	startTime     time.Time          // 开始时间
+	lastSendTime  time.Time          // 上次实际发送时间
+	sendDelay     time.Duration      // 固定延迟（如果>0则使用固定延迟，否则使用时间同步）
+	frameDuration time.Duration      // 帧时长
+	ctx           context.Context    // 用于中断流控
+	cancel        context.CancelFunc // 取消函数
 }
 
 // NewHardwareWriter create hardware writer
@@ -281,15 +283,19 @@ func (hw *HardwareWriter) SendTTSAudioWithFlowControl(data []byte, frameDuration
 	now := time.Now()
 	hw.ttsFlowControlMu.Lock()
 	if hw.ttsFlowControl == nil {
+		ctx, cancel := context.WithCancel(hw.ctx)
 		hw.ttsFlowControl = &ttsFlowControl{
 			packetCount:   0,
 			startTime:     now,
 			lastSendTime:  now,
 			sendDelay:     time.Duration(sendDelay) * time.Millisecond,
 			frameDuration: time.Duration(frameDuration) * time.Millisecond,
+			ctx:           ctx,
+			cancel:        cancel,
 		}
 	}
 	flowControl := hw.ttsFlowControl
+	flowCtx := flowControl.ctx
 	packetCount := flowControl.packetCount
 	flowControl.packetCount++
 	hw.ttsFlowControlMu.Unlock()
@@ -305,7 +311,14 @@ func (hw *HardwareWriter) SendTTSAudioWithFlowControl(data []byte, frameDuration
 			elapsed := now.Sub(lastSendTime)
 			if elapsed < flowControl.sendDelay {
 				// 如果距离上次发送时间还没到帧时长，等待剩余时间
-				time.Sleep(flowControl.sendDelay - elapsed)
+				delay := flowControl.sendDelay - elapsed
+				select {
+				case <-flowCtx.Done():
+					// 流控被中断（新的TTS开始）
+					return fmt.Errorf("TTS flow control interrupted")
+				case <-time.After(delay):
+					// 正常等待完成
+				}
 			}
 			// 如果已经超过帧时长，立即发送（不等待）
 		} else {
@@ -314,7 +327,13 @@ func (hw *HardwareWriter) SendTTSAudioWithFlowControl(data []byte, frameDuration
 			delay := time.Until(nextSendTime)
 			if delay > 0 {
 				// 等待到预期发送时间
-				time.Sleep(delay)
+				select {
+				case <-flowCtx.Done():
+					// 流控被中断（新的TTS开始）
+					return fmt.Errorf("TTS flow control interrupted")
+				case <-time.After(delay):
+					// 正常等待完成
+				}
 			} else if delay < -20*time.Millisecond {
 				hw.ttsFlowControlMu.Lock()
 				flowControl.lastSendTime = time.Now()
@@ -328,6 +347,9 @@ func (hw *HardwareWriter) SendTTSAudioWithFlowControl(data []byte, frameDuration
 	select {
 	case <-hw.ctx.Done():
 		return hw.ctx.Err()
+	case <-flowCtx.Done():
+		// 流控被中断（新的TTS开始）
+		return fmt.Errorf("TTS flow control interrupted")
 	case hw.binaryChan <- data:
 		// 更新实际发送时间（用于下次计算）
 		actualSendTime := time.Now()
@@ -342,7 +364,34 @@ func (hw *HardwareWriter) SendTTSAudioWithFlowControl(data []byte, frameDuration
 func (hw *HardwareWriter) ResetTTSFlowControl() {
 	hw.ttsFlowControlMu.Lock()
 	defer hw.ttsFlowControlMu.Unlock()
+
+	// 取消旧的流控context，中断正在sleep的goroutine
+	if hw.ttsFlowControl != nil && hw.ttsFlowControl.cancel != nil {
+		hw.logger.Info("[Writer] 取消旧的TTS流控")
+		hw.ttsFlowControl.cancel()
+	}
+
 	hw.ttsFlowControl = nil
+}
+
+// ClearTTSQueue 清空TTS音频队列（用于中断旧的TTS播放）
+func (hw *HardwareWriter) ClearTTSQueue() {
+	clearedCount := 0
+	// 清空binaryChan中的所有数据
+	for {
+		select {
+		case <-hw.binaryChan:
+			// 丢弃旧的音频数据
+			clearedCount++
+		default:
+			// channel已空
+			if clearedCount > 0 {
+				hw.logger.Info("[Writer] 清空TTS音频队列",
+					zap.Int("cleared_packets", clearedCount))
+			}
+			return
+		}
+	}
 }
 
 // SendTTSAudio 发送TTS音频数据

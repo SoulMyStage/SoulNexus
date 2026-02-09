@@ -15,7 +15,6 @@ type TTSPipelineConfig struct {
 	TTSService          TTSService
 	SendCallback        func(data []byte) error // 发送音频数据的回调
 	GetPendingCountFunc func() int              // 获取待发送包数量的回调
-	TTSWorkers          int                     // TTS 并发数，默认 2
 	TargetSampleRate    int                     // 目标采样率，默认 16000
 	FrameDuration       time.Duration           // 帧时长，默认 60ms
 	Logger              *zap.Logger
@@ -24,11 +23,12 @@ type TTSPipelineConfig struct {
 // TTSPipeline TTS 流式处理管道
 type TTSPipeline struct {
 	segmenter           *TextSegmenter
-	ttsWorkers          *TTSWorkerPool
+	ttsService          TTSService
 	audioSender         *AudioSender
-	segmentCh           chan TextSegment
 	audioCh             chan AudioFrame
 	currentPlayID       string
+	globalSeq           uint32 // 全局 sequence
+	seqMu               sync.Mutex
 	mu                  sync.RWMutex
 	ctx                 context.Context
 	cancel              context.CancelFunc
@@ -49,9 +49,6 @@ func NewTTSPipeline(config *TTSPipelineConfig) (*TTSPipeline, error) {
 	if config.SendCallback == nil {
 		return nil, fmt.Errorf("SendCallback is required")
 	}
-	if config.TTSWorkers == 0 {
-		config.TTSWorkers = 2
-	}
 	if config.TargetSampleRate == 0 {
 		config.TargetSampleRate = 16000
 	}
@@ -62,16 +59,8 @@ func NewTTSPipeline(config *TTSPipelineConfig) (*TTSPipeline, error) {
 		config.Logger, _ = zap.NewDevelopment()
 	}
 
-	segmentCh := make(chan TextSegment, 10)
 	audioCh := make(chan AudioFrame, 20)
-	segmenter := NewTextSegmenter(segmentCh, config.Logger)
-	ttsWorkers := NewTTSWorkerPool(
-		segmentCh,
-		audioCh,
-		config.TTSService,
-		config.TTSWorkers,
-		config.Logger,
-	)
+
 	audioSender, err := NewAudioSender(
 		audioCh,
 		config.TargetSampleRate,
@@ -84,16 +73,22 @@ func NewTTSPipeline(config *TTSPipelineConfig) (*TTSPipeline, error) {
 		return nil, fmt.Errorf("failed to create audio sender: %w", err)
 	}
 
-	return &TTSPipeline{
-		segmenter:           segmenter,
-		ttsWorkers:          ttsWorkers,
+	pipeline := &TTSPipeline{
+		ttsService:          config.TTSService,
 		audioSender:         audioSender,
-		segmentCh:           segmentCh,
 		audioCh:             audioCh,
 		currentPlayID:       uuid.New().String(),
 		logger:              config.Logger,
 		getPendingCountFunc: config.GetPendingCountFunc,
-	}, nil
+	}
+
+	// 创建 Segmenter，传入 TTS 处理回调
+	pipeline.segmenter = NewTextSegmenterWithCallback(
+		pipeline.processTTSSegment,
+		config.Logger,
+	)
+
+	return pipeline, nil
 }
 
 // Start 启动管道
@@ -103,13 +98,9 @@ func (p *TTSPipeline) Start(ctx context.Context) error {
 	// 设置 Segmenter 的 PlayID
 	p.segmenter.SetPlayID(p.currentPlayID)
 
-	// 启动所有组件
+	// 启动组件
 	if err := p.segmenter.Start(p.ctx); err != nil {
 		return fmt.Errorf("failed to start segmenter: %w", err)
-	}
-
-	if err := p.ttsWorkers.Start(p.ctx); err != nil {
-		return fmt.Errorf("failed to start tts workers: %w", err)
 	}
 
 	if err := p.audioSender.Start(p.ctx); err != nil {
@@ -136,11 +127,9 @@ func (p *TTSPipeline) Stop() error {
 
 	// 停止所有组件
 	p.segmenter.Stop()
-	p.ttsWorkers.Stop()
 	p.audioSender.Stop()
 
 	// 关闭 channel
-	close(p.segmentCh)
 	close(p.audioCh)
 
 	p.logger.Info("TTSPipeline stopped")
@@ -150,6 +139,72 @@ func (p *TTSPipeline) Stop() error {
 // OnLLMToken 处理 LLM 输出的 token
 func (p *TTSPipeline) OnLLMToken(token string) {
 	p.segmenter.OnToken(token)
+}
+
+// processTTSSegment 处理文本片段的 TTS 合成（替代 TTSWorkerPool）
+func (p *TTSPipeline) processTTSSegment(segment TextSegment) {
+	p.logger.Info("Synthesizing segment",
+		zap.String("text", segment.Text),
+		zap.String("play_id", segment.PlayID))
+
+	const frameSizeBytes = 1920 // 60ms @ 16kHz, 16bit, mono
+	buffer := make([]byte, 0, frameSizeBytes*2)
+
+	err := p.ttsService.SynthesizeStream(segment.Text, func(pcmData []byte) error {
+		buffer = append(buffer, pcmData...)
+		for len(buffer) >= frameSizeBytes {
+			frameData := make([]byte, frameSizeBytes)
+			copy(frameData, buffer[:frameSizeBytes])
+			buffer = buffer[frameSizeBytes:]
+
+			// 使用全局 sequence
+			p.seqMu.Lock()
+			sequence := p.globalSeq
+			p.globalSeq++
+			p.seqMu.Unlock()
+
+			frame := AudioFrame{
+				Data:       frameData,
+				SampleRate: 16000,
+				Channels:   1,
+				PlayID:     segment.PlayID,
+				Sequence:   sequence,
+			}
+			select {
+			case p.audioCh <- frame:
+			case <-p.ctx.Done():
+				return nil
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		p.logger.Error("TTS synthesis failed",
+			zap.String("text", segment.Text),
+			zap.Error(err))
+		return
+	}
+
+	// 处理剩余数据
+	if len(buffer) > 0 {
+		p.seqMu.Lock()
+		sequence := p.globalSeq
+		p.globalSeq++
+		p.seqMu.Unlock()
+
+		frame := AudioFrame{
+			Data:       buffer,
+			SampleRate: 16000,
+			Channels:   1,
+			PlayID:     segment.PlayID,
+			Sequence:   sequence,
+		}
+		select {
+		case p.audioCh <- frame:
+		case <-p.ctx.Done():
+		}
+	}
 }
 
 // OnLLMComplete LLM 完成输出
@@ -202,27 +257,17 @@ func (p *TTSPipeline) waitForCompletion(ctx context.Context) {
 			return
 		case <-ticker.C:
 			bufferLevel := p.audioSender.GetBufferLevel()
-			segmentChLen := len(p.segmentCh)
 			audioChLen := len(p.audioCh)
 			pendingPackets := 0
 			if p.getPendingCountFunc != nil {
 				pendingPackets = p.getPendingCountFunc()
 			}
-			p.logger.Info("[TTS Pipeline] 检查完成状态",
-				zap.Int("segmentCh", segmentChLen),
-				zap.Int("audioCh", audioChLen),
-				zap.Int("bufferLevel", bufferLevel),
-				zap.Int("pendingPackets", pendingPackets),
-				zap.Int("emptyCount", emptyCount))
-
-			// 检查所有 channel 和缓冲区是否为空
-			if segmentChLen == 0 && audioChLen == 0 && bufferLevel == 0 && pendingPackets == 0 {
+			if audioChLen == 0 && bufferLevel == 0 && pendingPackets == 0 {
 				emptyCount++
 				p.logger.Info("[TTS Pipeline] 所有队列为空",
 					zap.Int("emptyCount", emptyCount))
 				// 连续 3 次检查都为空（300ms），认为播放完成
 				if emptyCount >= 3 {
-					p.logger.Info("[TTS Pipeline] ========== 所有音频已发送完成，触发回调 ==========")
 					p.triggerComplete()
 					return
 				}
@@ -265,6 +310,11 @@ func (p *TTSPipeline) Interrupt() {
 	oldPlayID := p.currentPlayID
 	p.currentPlayID = uuid.New().String()
 
+	// 重置 sequence
+	p.seqMu.Lock()
+	p.globalSeq = 0
+	p.seqMu.Unlock()
+
 	p.logger.Info("Pipeline interrupted",
 		zap.String("old_play_id", oldPlayID),
 		zap.String("new_play_id", p.currentPlayID))
@@ -275,21 +325,8 @@ func (p *TTSPipeline) Interrupt() {
 	p.audioSender.Reset()
 
 	// 清空 channel
-	p.drainChannel(p.segmentCh)
-	p.drainChannel(p.audioCh)
-}
-
-// drainChannel 清空 channel
-func (p *TTSPipeline) drainChannel(ch interface{}) {
-	switch c := ch.(type) {
-	case chan TextSegment:
-		for len(c) > 0 {
-			<-c
-		}
-	case chan AudioFrame:
-		for len(c) > 0 {
-			<-c
-		}
+	for len(p.audioCh) > 0 {
+		<-p.audioCh
 	}
 }
 
@@ -311,14 +348,14 @@ func (p *TTSPipeline) PrintMetrics() {
 
 	p.logger.Info("=== TTS Pipeline 状态 ===",
 		zap.Int("buffer_level", bufferLevel),
-		zap.Int("segment_ch", len(p.segmentCh)),
 		zap.Int("audio_ch", len(p.audioCh)))
 }
 
 // UpdateTTSService 动态更新 TTS 服务（用于发音人切换）
-// 这个方法不会重建整个 Pipeline，只更新 TTS 服务，速度更快
 func (p *TTSPipeline) UpdateTTSService(newService TTSService) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.logger.Info("Pipeline 开始更新 TTS 服务")
-	p.ttsWorkers.UpdateTTSService(newService)
+	p.ttsService = newService
 	p.logger.Info("Pipeline TTS 服务更新完成")
 }

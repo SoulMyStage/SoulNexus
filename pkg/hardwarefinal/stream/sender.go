@@ -105,13 +105,6 @@ func (s *AudioSender) inputLoop() {
 // processFrame 处理音频帧（编码 + 缓冲）
 func (s *AudioSender) processFrame(frame AudioFrame) {
 	pcmData := frame.Data
-
-	s.logger.Debug("Processing PCM frame",
-		zap.Int("pcm_size", len(pcmData)),
-		zap.String("play_id", frame.PlayID),
-		zap.Uint32("sequence", frame.Sequence))
-
-	// Opus 编码
 	packets, err := s.encoder(&media.AudioPacket{Payload: pcmData})
 	if err != nil {
 		s.logger.Error("Opus encoding failed", zap.Error(err))
@@ -119,17 +112,11 @@ func (s *AudioSender) processFrame(frame AudioFrame) {
 	}
 
 	if len(packets) == 0 {
-		s.logger.Debug("Encoder returned no packets (buffering)")
 		return
 	}
 
 	audioPacket := packets[0].(*media.AudioPacket)
 	opusData := audioPacket.Payload
-
-	s.logger.Debug("Encoded to Opus",
-		zap.Int("opus_size", len(opusData)),
-		zap.Int("pcm_size", len(pcmData)))
-
 	opusFrame := OpusFrame{
 		Data:     opusData,
 		PlayID:   frame.PlayID,

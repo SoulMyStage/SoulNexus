@@ -74,14 +74,17 @@ type AudioFrame struct {
 
 // TTSWorkerPool TTS 工作池
 type TTSWorkerPool struct {
-	inputCh    <-chan TextSegment
-	outputCh   chan<- AudioFrame
-	ttsService TTSService
-	workers    int
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	logger     *zap.Logger
+	inputCh      <-chan TextSegment
+	outputCh     chan<- AudioFrame
+	ttsService   TTSService
+	workers      int
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	logger       *zap.Logger
+	sequenceMu   sync.Mutex   // 保护全局 sequence
+	globalSeq    uint32       // 全局 sequence，确保音频帧顺序
+	ttsServiceMu sync.RWMutex // 保护 ttsService 的并发访问
 }
 
 // NewTTSWorkerPool 创建 TTS 工作池
@@ -142,15 +145,26 @@ func (p *TTSWorkerPool) synthesize(workerID int, segment TextSegment) {
 		zap.String("text", segment.Text),
 		zap.String("play_id", segment.PlayID))
 
-	sequence := uint32(0)
 	const frameSizeBytes = 1920 // 60ms @ 16kHz, 16bit, mono = 16000 * 0.06 * 2 = 1920 bytes
 	buffer := make([]byte, 0, frameSizeBytes*2)
-	err := p.ttsService.SynthesizeStream(segment.Text, func(pcmData []byte) error {
+
+	// 获取 TTS 服务（线程安全）
+	p.ttsServiceMu.RLock()
+	ttsService := p.ttsService
+	p.ttsServiceMu.RUnlock()
+
+	err := ttsService.SynthesizeStream(segment.Text, func(pcmData []byte) error {
 		buffer = append(buffer, pcmData...)
 		for len(buffer) >= frameSizeBytes {
 			frameData := make([]byte, frameSizeBytes)
 			copy(frameData, buffer[:frameSizeBytes])
 			buffer = buffer[frameSizeBytes:]
+
+			// 使用全局 sequence，确保顺序
+			p.sequenceMu.Lock()
+			sequence := p.globalSeq
+			p.globalSeq++
+			p.sequenceMu.Unlock()
 
 			frame := AudioFrame{
 				Data:       frameData,
@@ -159,7 +173,6 @@ func (p *TTSWorkerPool) synthesize(workerID int, segment TextSegment) {
 				PlayID:     segment.PlayID,
 				Sequence:   sequence,
 			}
-			sequence++
 			select {
 			case p.outputCh <- frame:
 			case <-p.ctx.Done():
@@ -176,6 +189,12 @@ func (p *TTSWorkerPool) synthesize(workerID int, segment TextSegment) {
 		return
 	}
 	if len(buffer) > 0 {
+		// 使用全局 sequence
+		p.sequenceMu.Lock()
+		sequence := p.globalSeq
+		p.globalSeq++
+		p.sequenceMu.Unlock()
+
 		frame := AudioFrame{
 			Data:       buffer,
 			SampleRate: 16000,
@@ -193,8 +212,9 @@ func (p *TTSWorkerPool) synthesize(workerID int, segment TextSegment) {
 // UpdateTTSService 动态更新 TTS 服务（用于发音人切换）
 func (p *TTSWorkerPool) UpdateTTSService(newService TTSService) {
 	p.logger.Info("更新 TTS 服务")
-	// 直接替换 TTS 服务，正在进行的合成会继续使用旧服务
-	// 新的合成请求会使用新服务
+	// 使用写锁保护 TTS 服务更新
+	p.ttsServiceMu.Lock()
 	p.ttsService = newService
+	p.ttsServiceMu.Unlock()
 	p.logger.Info("TTS 服务更新完成")
 }

@@ -9,7 +9,7 @@ const (
 	DefaultTemperature          = 0.7
 	DefaultLLMModel             = "deepseek-v3.1" // 默认LLM模型
 	DefaultVADThreshold         = 500.0
-	DefaultEnabledVAD           = false
+	DefaultEnabledVAD           = true
 	DefaultVADConsecutiveFrames = 2
 	DefaultMaxLLMToken          = 100
 )

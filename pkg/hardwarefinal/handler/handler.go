@@ -41,14 +41,17 @@ func (h *HardwareHandler) HandlerHardwareWebsocket(
 		zap.String("language", options.Language))
 
 	session := protocol.NewHardwareSession(ctx, &protocol.HardwareSessionOption{
-		Conn:         options.Conn,
-		Logger:       h.logger,
-		AssistantID:  options.AssistantID,
-		LLMModel:     options.LLMModel,
-		Credential:   options.Credential,
-		SystemPrompt: options.SystemPrompt,
-		MaxToken:     options.MaxLLMToken,
-		Speaker:      options.Speaker,
+		Conn:                 options.Conn,
+		Logger:               h.logger,
+		AssistantID:          options.AssistantID,
+		LLMModel:             options.LLMModel,
+		Credential:           options.Credential,
+		SystemPrompt:         options.SystemPrompt,
+		MaxToken:             options.MaxLLMToken,
+		Speaker:              options.Speaker,
+		EnableVAD:            options.EnableVAD,
+		VADThreshold:         options.VADThreshold,
+		VADConsecutiveFrames: options.VADConsecutiveFrames,
 	})
 	if err := session.Start(); err != nil {
 		h.logger.Error("[Handler] 启动会话失败", zap.Error(err))

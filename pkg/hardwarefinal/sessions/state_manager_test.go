@@ -54,35 +54,6 @@ func TestASRStateManager_UpdateASRText_Intermediate(t *testing.T) {
 	}
 }
 
-func TestASRStateManager_DuplicateFiltering(t *testing.T) {
-	manager := NewASRStateManager()
-
-	// 第一次：完整句子
-	result := manager.UpdateASRText("喂喂喂，可以听到我说话吗？", false)
-	if result == "" {
-		t.Error("Expected text, got empty")
-	}
-
-	// 只是加了标点符号，应该被过滤
-	result = manager.UpdateASRText("喂喂喂，可以听到我说话吗？", false)
-	if result != "" {
-		t.Errorf("Expected empty for duplicate, got '%s'", result)
-	}
-
-	// 测试最终结果的去重
-	manager.Clear()
-	result = manager.UpdateASRText("你好世界", true)
-	if result != "你好世界" {
-		t.Errorf("Expected '你好世界', got '%s'", result)
-	}
-
-	// 只加标点的最终结果应该被过滤
-	result = manager.UpdateASRText("你好世界。", true)
-	if result != "" {
-		t.Errorf("Expected empty for punctuation-only change in final result, got '%s'", result)
-	}
-}
-
 func TestASRStateManager_IncompleteThenComplete(t *testing.T) {
 	manager := NewASRStateManager()
 

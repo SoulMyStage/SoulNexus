@@ -154,7 +154,7 @@ func (m *ASRStateManager) extractIncremental(current string) string {
 	return current
 }
 
-// extractNewSentences 从累积文本中提取新句子
+// extractNewSentences 从累积文本中提取新句子（返回所有新增的完整句子）
 func (m *ASRStateManager) extractNewSentences(current string) string {
 	if current == "" {
 		return ""
@@ -162,15 +162,19 @@ func (m *ASRStateManager) extractNewSentences(current string) string {
 
 	lastProcessed := m.lastProcessedCumulativeText
 	if lastProcessed == "" {
-		if m.isCompleteSentence(current) {
-			return current
+		// 第一次处理，查找所有完整句子
+		lastEndingIdx := m.findLastSentenceEnding(current)
+		if lastEndingIdx >= 0 {
+			return current[:lastEndingIdx+1]
 		}
 		return ""
 	}
 
 	if !strings.HasPrefix(current, lastProcessed) {
-		if m.isCompleteSentence(current) {
-			return current
+		// 当前文本不是以上次处理的文本开头，可能是新的对话
+		lastEndingIdx := m.findLastSentenceEnding(current)
+		if lastEndingIdx >= 0 {
+			return current[:lastEndingIdx+1]
 		}
 		return ""
 	}
@@ -180,13 +184,18 @@ func (m *ASRStateManager) extractNewSentences(current string) string {
 		return ""
 	}
 
-	// 查找句子结束符
+	// 查找新增部分中的最后一个句子结束符（返回所有完整句子）
+	lastEndingIdx := -1
 	for i, r := range newText {
 		for _, ending := range m.sentenceEndings {
 			if r == ending {
-				return newText[:i+1]
+				lastEndingIdx = i
 			}
 		}
+	}
+
+	if lastEndingIdx >= 0 {
+		return newText[:lastEndingIdx+1]
 	}
 
 	return ""
@@ -275,6 +284,13 @@ func (m *ASRStateManager) GetLastText() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastProcessedText
+}
+
+// GetLastProcessedCumulativeText 获取累积处理的文本（用于调试）
+func (m *ASRStateManager) GetLastProcessedCumulativeText() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastProcessedCumulativeText
 }
 
 // normalizeTextFast 快速标准化文本用于比较

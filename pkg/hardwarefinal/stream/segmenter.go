@@ -19,7 +19,8 @@ type TextSegment struct {
 
 // TextSegmenter text segmenter
 type TextSegmenter struct {
-	outputCh      chan<- TextSegment
+	outputCh      chan<- TextSegment // 旧的 channel 模式（可选）
+	outputFunc    func(TextSegment)  // 新的回调模式
 	buffer        string
 	lastUpdate    time.Time
 	delayTimer    *time.Timer
@@ -33,10 +34,21 @@ type TextSegmenter struct {
 	logger        *zap.Logger
 }
 
-// NewTextSegmenter create text segmenter
+// NewTextSegmenter create text segmenter (channel mode)
 func NewTextSegmenter(outputCh chan<- TextSegment, logger *zap.Logger) *TextSegmenter {
 	return &TextSegmenter{
 		outputCh:     outputCh,
+		delayTimeout: 100 * time.Millisecond,
+		minChars:     8,
+		maxChars:     40,
+		logger:       logger,
+	}
+}
+
+// NewTextSegmenterWithCallback create text segmenter (callback mode)
+func NewTextSegmenterWithCallback(outputFunc func(TextSegment), logger *zap.Logger) *TextSegmenter {
+	return &TextSegmenter{
+		outputFunc:   outputFunc,
 		delayTimeout: 100 * time.Millisecond,
 		minChars:     8,
 		maxChars:     40,
@@ -132,11 +144,20 @@ func (s *TextSegmenter) flush(isFinal bool) {
 		zap.String("text", s.buffer),
 		zap.Bool("isFinal", isFinal),
 		zap.Int("length", len([]rune(s.buffer))))
-	select {
-	case s.outputCh <- segment:
+
+	// 支持两种模式：channel 或 callback
+	if s.outputFunc != nil {
+		// 回调模式：直接调用（同步）
+		s.outputFunc(segment)
 		s.buffer = ""
-	case <-s.ctx.Done():
-		return
+	} else if s.outputCh != nil {
+		// Channel 模式：发送到 channel
+		select {
+		case s.outputCh <- segment:
+			s.buffer = ""
+		case <-s.ctx.Done():
+			return
+		}
 	}
 }
 

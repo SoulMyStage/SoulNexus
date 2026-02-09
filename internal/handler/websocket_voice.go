@@ -467,17 +467,20 @@ func (h *Handlers) HandleHardwareWebSocketVoice1(c *gin.Context) {
 	ctx := context.Background()
 
 	handler.HandlerHardwareWebsocket(ctx, &hardwarefinal.HardwareOptions{
-		Conn:         conn,
-		AssistantID:  assistantID,
-		DeviceID:     &device.ID,
-		Language:     language,
-		Speaker:      speaker,
-		Temperature:  float64(temperature),
-		SystemPrompt: systemPrompt,
-		KnowledgeKey: knowledgeKey,
-		UserID:       device.UserID,
-		MacAddress:   device.MacAddress,
-		LLMModel:     llmModel,
-		Credential:   cred,
+		Conn:                 conn,
+		AssistantID:          assistantID,
+		DeviceID:             &device.ID,
+		Language:             language,
+		Speaker:              speaker,
+		Temperature:          float64(temperature),
+		SystemPrompt:         systemPrompt,
+		KnowledgeKey:         knowledgeKey,
+		UserID:               device.UserID,
+		MacAddress:           device.MacAddress,
+		LLMModel:             llmModel,
+		Credential:           cred,
+		EnableVAD:            assistant.EnableVAD,
+		VADThreshold:         assistant.VADThreshold,
+		VADConsecutiveFrames: assistant.VADConsecutiveFrames,
 	})
 }

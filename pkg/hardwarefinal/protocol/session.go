@@ -28,14 +28,17 @@ const (
 )
 
 type HardwareSessionOption struct {
-	Conn         *websocket.Conn
-	Logger       *zap.Logger
-	AssistantID  uint
-	Credential   *models.UserCredential
-	LLMModel     string
-	SystemPrompt string
-	MaxToken     int
-	Speaker      string
+	Conn                 *websocket.Conn
+	Logger               *zap.Logger
+	AssistantID          uint
+	Credential           *models.UserCredential
+	LLMModel             string
+	SystemPrompt         string
+	MaxToken             int
+	Speaker              string
+	EnableVAD            bool
+	VADThreshold         float64
+	VADConsecutiveFrames int
 }
 
 type HardwareSession struct {
@@ -52,13 +55,21 @@ type HardwareSession struct {
 	logger         *zap.Logger
 	mu             sync.RWMutex
 	active         bool
-	goodbyePending bool // 待机待处理标志
+	goodbyePending bool
+	llmProcessing  bool // LLM 是否正在处理
 }
 
 func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOption) *HardwareSession {
 	if hardwareConfig.Logger == nil {
 		hardwareConfig.Logger = zap.L()
 	}
+
+	// 记录 VAD 配置
+	hardwareConfig.Logger.Info("[Session] 创建会话，VAD 配置",
+		zap.Bool("EnableVAD", hardwareConfig.EnableVAD),
+		zap.Float64("VADThreshold", hardwareConfig.VADThreshold),
+		zap.Int("VADConsecutiveFrames", hardwareConfig.VADConsecutiveFrames))
+
 	sessionCtx, cancel := context.WithCancel(ctx)
 	writer := NewHardwareWriter(sessionCtx, hardwareConfig.Conn, hardwareConfig.Logger)
 
@@ -74,11 +85,7 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 		logger.Fatal("创建 LLM 服务失败", zap.Error(err))
 	}
 	tools.RegisterBuiltinTools(llmService)
-
-	// 创建发音人管理器
 	speakerManager := tools.NewSpeakerManager(hardwareConfig.Logger)
-
-	// 注册发音人切换工具
 	tools.RegisterSpeakerTool(llmService, speakerManager)
 
 	ttsProvider := hardwareConfig.Credential.GetTTSProvider()
@@ -96,11 +103,13 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 	if err != nil {
 		logger.Fatal("创建 TTS 服务失败", zap.Error(err))
 	}
+	var session *HardwareSession
 	pipeline, err := stream.NewTTSPipeline(&stream.TTSPipelineConfig{
-		TTSService:          stream.NewTTSServiceAdapter(ttsService),
-		SendCallback:        func(data []byte) error { return writer.SendTTSAudioWithFlowControl(data, 60, 60) },
+		TTSService: stream.NewTTSServiceAdapter(ttsService),
+		SendCallback: func(data []byte) error {
+			return writer.SendTTSAudioWithFlowControl(data, 60, 60)
+		},
 		GetPendingCountFunc: func() int { return writer.GetBinaryChannelLength() },
-		TTSWorkers:          2,
 		TargetSampleRate:    16000,
 		FrameDuration:       60 * time.Millisecond,
 		Logger:              hardwareConfig.Logger,
@@ -111,7 +120,7 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 	if err := pipeline.Start(sessionCtx); err != nil {
 		logger.Fatal("启动 TTS Pipeline 失败", zap.Error(err))
 	}
-	session := &HardwareSession{
+	session = &HardwareSession{
 		config:         hardwareConfig,
 		logger:         hardwareConfig.Logger,
 		active:         false,
@@ -127,12 +136,13 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 	speakerManager.SetSwitchCallback(func(speakerID string) error {
 		return session.switchSpeaker(speakerID, ttsProvider, ttsConfig)
 	})
-	pipeline.SetOnComplete(func() {
-		logger.Info("[TTS Pipeline] 播放完成，发送 TTS 结束消息")
-		if err := writer.SendTTSEnd(); err != nil {
-			logger.Error("[TTS Pipeline] 发送 TTS 结束消息失败", zap.Error(err))
-		}
+	tools.RegisterGoodbyeTool(llmService, func() error {
+		return session.handleGoodbye()
 	})
+	pipeline.SetOnComplete(func() {
+		session.onTTSComplete()
+	})
+
 	return session
 }
 
@@ -256,13 +266,19 @@ func (s *HardwareSession) handleAbortMessage() {
 		s.ttsPipeline.Interrupt()
 	}
 
-	// 3. 重置 TTS 流控
+	// 3. 清空 TTS 音频队列
+	if s.writer != nil {
+		s.logger.Info("[Session] 清空 TTS 音频队列")
+		s.writer.ClearTTSQueue()
+	}
+
+	// 4. 重置 TTS 流控
 	if s.writer != nil {
 		s.logger.Info("[Session] 重置 TTS 流控")
 		s.writer.ResetTTSFlowControl()
 	}
 
-	// 4. 发送中断确认消息
+	// 5. 发送中断确认消息
 	if s.writer != nil {
 		if err := s.writer.SendAbortConfirmation(); err != nil {
 			s.logger.Error("[Session] 发送中断确认消息失败", zap.Error(err))
@@ -318,18 +334,72 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 	}
 
 	pipeline, err := sessions.NewASRPipeline(&sessions.ASRPipelineOption{
-		Asr:           asrService,
-		SampleRate:    sampleRate,
-		Channels:      channels,
-		FrameDuration: frameDuration,
+		Asr:                  asrService,
+		SampleRate:           sampleRate,
+		Channels:             channels,
+		FrameDuration:        frameDuration,
+		EnableVAD:            s.config.EnableVAD,
+		VADThreshold:         s.config.VADThreshold,
+		VADConsecutiveFrames: s.config.VADConsecutiveFrames,
 	}, s.logger)
 	if err != nil {
 		s.mu.Unlock()
 		s.logger.Error("创建ASRPipeline失败", zap.Error(err))
 		return
 	}
+
+	s.logger.Info("[Session] ASR Pipeline 创建成功，VAD 配置",
+		zap.Bool("EnableVAD", s.config.EnableVAD),
+		zap.Float64("VADThreshold", s.config.VADThreshold),
+		zap.Int("VADConsecutiveFrames", s.config.VADConsecutiveFrames))
+
+	s.asrPipeline = pipeline
+
+	// 设置 Barge-in 回调：当 VAD 检测到用户说话时，打断 TTS 和 LLM
+	pipeline.SetBargeInCallback(func() {
+		s.logger.Info("[Session] Barge-in 触发：用户说话，打断 TTS 和 LLM")
+
+		// 1. 中断 LLM 生成
+		if s.llmService != nil {
+			s.llmService.GetProvider().Interrupt()
+		}
+
+		// 2. 中断 TTS 播放
+		if s.ttsPipeline != nil {
+			s.ttsPipeline.Interrupt()
+		}
+
+		// 3. 清空 TTS 音频队列
+		if s.writer != nil {
+			s.writer.ClearTTSQueue()
+		}
+
+		// 4. 重置 TTS 流控
+		if s.writer != nil {
+			s.writer.ResetTTSFlowControl()
+		}
+
+		// 5. 清除 TTS 播放状态
+		pipeline.ClearTTSState()
+
+		// 6. 清除 LLM 处理标志，允许新的识别结果触发 LLM
+		s.mu.Lock()
+		s.llmProcessing = false
+		s.mu.Unlock()
+
+		s.logger.Info("[Session] Barge-in 处理完成")
+	})
+
 	pipeline.SetOutputCallback(func(text string, isFinal bool) {
 		incrementalText := s.stateManager.UpdateASRText(text, isFinal)
+
+		// 调试日志
+		s.logger.Info("[Session] StateManager 处理结果",
+			zap.String("原始文本", text),
+			zap.String("增量文本", incrementalText),
+			zap.Bool("isFinal", isFinal),
+			zap.String("lastProcessedCumulative", s.stateManager.GetLastProcessedCumulativeText()))
+
 		if incrementalText == "" {
 			return
 		}
@@ -340,19 +410,56 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 		if err := s.writer.SendASRResult(incrementalText); err != nil {
 			s.logger.Error("[Session] 发送 ASR 结果失败", zap.Error(err))
 		}
+
+		// ========== 检查是否已有 LLM 在处理 ==========
+		s.mu.Lock()
+		if s.llmProcessing {
+			s.logger.Info("[Session] LLM 正在处理中，忽略新的 ASR 结果",
+				zap.String("text", incrementalText))
+			s.mu.Unlock()
+			return
+		}
+		// 标记 LLM 开始处理
+		s.llmProcessing = true
+		s.mu.Unlock()
+		s.logger.Info("[Session] 开始处理新的 ASR 结果")
+		// ========== 检查结束 ==========
+
+		// 清除 TTS 播放状态
+		if s.asrPipeline != nil {
+			s.asrPipeline.ClearTTSState()
+		}
+
 		if err := s.writer.SendTTSStart(); err != nil {
 			s.logger.Error("[Session] 发送 TTS 开始消息失败", zap.Error(err))
 		}
-		s.writer.ResetTTSFlowControl()
 		token := 70
 
 		// 异步调用 LLM，避免阻塞 ASR 处理
 		go func(text string) {
+			// 标记是否收到过 LLM 内容
+			receivedContent := false
+
+			// 确保 LLM 处理完成后清除标志
+			defer func() {
+				s.mu.Lock()
+				s.llmProcessing = false
+				s.mu.Unlock()
+				s.logger.Info("[Session] LLM 处理完成，清除处理标志")
+			}()
+
 			err := s.llmService.QueryStream(text, func(segment string, isComplete bool) error {
 				s.logger.Info("========== LLM 回调 ==========",
 					zap.String("segment", segment),
 					zap.Bool("is_complete", isComplete))
 				if !isComplete {
+					// 第一次收到 LLM 内容时，设置 TTS 播放状态
+					if !receivedContent {
+						receivedContent = true
+						if s.asrPipeline != nil {
+							s.asrPipeline.SetTTSPlaying(true)
+						}
+					}
 					s.ttsPipeline.OnLLMToken(segment)
 				} else {
 					s.logger.Info("========== LLM 完成，调用 OnLLMComplete ==========")
@@ -367,6 +474,15 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 			})
 			if err != nil {
 				s.logger.Error("[Session] LLM 查询失败", zap.Error(err))
+
+				// 如果没有收到任何内容就失败了，发送 TTS 结束消息
+				if !receivedContent {
+					s.logger.Info("[Session] LLM 未返回内容就失败，发送 TTS 结束消息")
+					if sendErr := s.writer.SendTTSEnd(); sendErr != nil {
+						s.logger.Error("[Session] 发送 TTS 结束消息失败", zap.Error(sendErr))
+					}
+				}
+
 				// 发送错误消息给客户端
 				if sendErr := s.writer.SendError(fmt.Sprintf("LLM 查询失败: %v", err), false); sendErr != nil {
 					s.logger.Error("[Session] 发送错误消息失败", zap.Error(sendErr))
@@ -479,4 +595,50 @@ func (s *HardwareSession) switchSpeaker(speakerID string, ttsProvider string, ba
 		zap.String("speaker_id", speakerID))
 
 	return nil
+}
+
+// handleGoodbye 处理待机请求
+func (s *HardwareSession) handleGoodbye() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logger.Info("[Session] 收到待机请求，将在 TTS 播放完成后进入待机状态")
+	s.goodbyePending = true
+	return nil
+}
+
+// onTTSComplete TTS 播放完成回调
+func (s *HardwareSession) onTTSComplete() {
+	s.logger.Info("[TTS Pipeline] 播放完成，发送 TTS 结束消息")
+
+	// 清除TTS播放状态，允许ASR继续处理（带1秒宽限期）
+	if s.asrPipeline != nil {
+		s.asrPipeline.SetTTSPlaying(false)
+	}
+
+	// 清除 StateManager 状态，避免累积文本过长导致无法提取新句子
+	if s.stateManager != nil {
+		s.stateManager.Clear()
+		s.logger.Info("[Session] StateManager 状态已清除，准备接收新的对话")
+	}
+
+	if err := s.writer.SendTTSEnd(); err != nil {
+		s.logger.Error("[TTS Pipeline] 发送 TTS 结束消息失败", zap.Error(err))
+	}
+	s.mu.RLock()
+	goodbyePending := s.goodbyePending
+	s.mu.RUnlock()
+
+	if goodbyePending {
+		s.logger.Info("[Session] 检测到待机请求，准备断开连接")
+		go func() {
+			// 等待一小段时间，确保 TTS 结束消息已发送
+			time.Sleep(100 * time.Millisecond)
+			s.logger.Info("[Session] 执行待机断开连接")
+			if err := s.Stop(); err != nil {
+				s.logger.Error("[Session] 待机断开连接失败", zap.Error(err))
+			} else {
+				s.logger.Info("[Session] 待机断开连接成功，硬件将进入待机状态")
+			}
+		}()
+	}
 }
