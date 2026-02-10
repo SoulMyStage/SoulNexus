@@ -63,16 +63,22 @@ func TestASRStateManager_IncompleteThenComplete(t *testing.T) {
 		t.Errorf("Expected empty for incomplete sentence, got '%s'", result)
 	}
 
-	// 第二次：加了标点符号，但内容相似，应该被过滤
+	// 第二次：加了标点符号，形成完整句子，应该被提取
 	result = manager.UpdateASRText("喂喂喂，可以听到我说话吗？", false)
-	if result != "" {
-		t.Errorf("Expected empty for similar text with punctuation, got '%s'", result)
+	if result != "喂喂喂，可以听到我说话吗？" {
+		t.Errorf("Expected complete sentence to be extracted, got '%s'", result)
 	}
 
 	// 验证状态已更新（保留了最新版本）
 	if manager.lastProcessedCumulativeText != "喂喂喂，可以听到我说话吗？" {
 		t.Errorf("Expected lastProcessedCumulativeText to be updated to latest version, got '%s'",
 			manager.lastProcessedCumulativeText)
+	}
+
+	// 第三次：ASR 继续返回相同内容，应该被过滤
+	result = manager.UpdateASRText("喂喂喂，可以听到我说话吗？", false)
+	if result != "" {
+		t.Errorf("Expected empty for duplicate content, got '%s'", result)
 	}
 }
 
@@ -133,5 +139,55 @@ func TestCalculateSimilarityFast(t *testing.T) {
 			t.Errorf("calculateSimilarityFast(%q, %q) = %f, want between %f and %f",
 				tt.text1, tt.text2, result, tt.minSim, tt.maxSim)
 		}
+	}
+}
+
+func TestStateManager_NewSentenceAfterPreviousConversation(t *testing.T) {
+	sm := NewASRStateManager()
+
+	// 模拟之前的对话
+	result1 := sm.UpdateASRText("喂，你好啊。", false)
+	if result1 != "喂，你好啊。" {
+		t.Errorf("第一句应该被提取，got: %s", result1)
+	}
+
+	result2 := sm.UpdateASRText("喂，你好啊。喂，你好。", false)
+	if result2 != "喂，你好。" {
+		t.Errorf("第二句应该被提取，got: %s", result2)
+	}
+
+	// 模拟用户说新的内容 "你好，再见。"
+	// ASR 会累积所有文本
+	result3 := sm.UpdateASRText("喂，你好啊。喂，你好。你好，再见。", false)
+	if result3 != "你好，再见。" {
+		t.Errorf("新句子应该被提取，got: %s", result3)
+	}
+
+	// ASR 继续返回相同的累积文本（没有新内容）
+	result4 := sm.UpdateASRText("喂，你好啊。喂，你好。你好，再见。", false)
+	if result4 != "" {
+		t.Errorf("重复内容应该被过滤，got: %s", result4)
+	}
+}
+
+func TestStateManager_SimilarityCheckAfterNewSentence(t *testing.T) {
+	sm := NewASRStateManager()
+
+	// 第一次识别
+	result1 := sm.UpdateASRText("你好。", false)
+	if result1 != "你好。" {
+		t.Errorf("第一句应该被提取，got: %s", result1)
+	}
+
+	// ASR 继续返回相同内容（没有新句子）
+	result2 := sm.UpdateASRText("你好。", false)
+	if result2 != "" {
+		t.Errorf("相同内容应该被过滤，got: %s", result2)
+	}
+
+	// 用户说新的内容
+	result3 := sm.UpdateASRText("你好。再见。", false)
+	if result3 != "再见。" {
+		t.Errorf("新句子应该被提取，got: %s", result3)
 	}
 }

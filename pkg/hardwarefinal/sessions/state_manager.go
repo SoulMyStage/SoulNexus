@@ -61,7 +61,11 @@ func (m *ASRStateManager) UpdateASRText(text string, isFinal bool) string {
 		m.lastProcessedCumulativeText = text
 		return incremental
 	}
-	if m.lastProcessedCumulativeText != "" {
+	// 先尝试提取新句子
+	newSentences := m.extractNewSentences(text)
+
+	// 如果没有新句子，再进行相似度检测
+	if newSentences == "" && m.lastProcessedCumulativeText != "" {
 		normalizedLast := normalizeTextFast(m.lastProcessedCumulativeText)
 		normalizedCurrent := normalizeTextFast(text)
 
@@ -73,12 +77,13 @@ func (m *ASRStateManager) UpdateASRText(text string, isFinal bool) string {
 			}
 		}
 	}
-	newSentences := m.extractNewSentences(text)
 	if newSentences != "" {
 		lastProcessed := m.lastProcessedCumulativeText
 		if lastProcessed == "" {
-			if endIdx := m.findLastSentenceEnding(text); endIdx >= 0 {
-				m.lastProcessedCumulativeText = text[:endIdx+1]
+			endIdx := m.findLastSentenceEnding(text)
+			if endIdx >= 0 {
+				runes := []rune(text)
+				m.lastProcessedCumulativeText = string(runes[:endIdx+1])
 				return newSentences
 			}
 			m.lastProcessedCumulativeText = text
@@ -87,8 +92,10 @@ func (m *ASRStateManager) UpdateASRText(text string, isFinal bool) string {
 			if len(processedText) <= len(text) && strings.HasPrefix(text, processedText) {
 				m.lastProcessedCumulativeText = processedText
 			} else {
-				if endIdx := m.findLastSentenceEnding(text); endIdx >= 0 {
-					m.lastProcessedCumulativeText = text[:endIdx+1]
+				endIdx := m.findLastSentenceEnding(text)
+				if endIdx >= 0 {
+					runes := []rune(text)
+					m.lastProcessedCumulativeText = string(runes[:endIdx+1])
 					return newSentences
 				}
 				m.lastProcessedCumulativeText = text
@@ -165,7 +172,9 @@ func (m *ASRStateManager) extractNewSentences(current string) string {
 		// 第一次处理，查找所有完整句子
 		lastEndingIdx := m.findLastSentenceEnding(current)
 		if lastEndingIdx >= 0 {
-			return current[:lastEndingIdx+1]
+			// 使用 rune 切片确保 UTF-8 安全
+			runes := []rune(current)
+			return string(runes[:lastEndingIdx+1])
 		}
 		return ""
 	}
@@ -174,19 +183,30 @@ func (m *ASRStateManager) extractNewSentences(current string) string {
 		// 当前文本不是以上次处理的文本开头，可能是新的对话
 		lastEndingIdx := m.findLastSentenceEnding(current)
 		if lastEndingIdx >= 0 {
-			return current[:lastEndingIdx+1]
+			runes := []rune(current)
+			return string(runes[:lastEndingIdx+1])
 		}
 		return ""
 	}
 
-	newText := current[len(lastProcessed):]
+	// 使用 rune 切片确保 UTF-8 安全
+	currentRunes := []rune(current)
+	lastProcessedRunes := []rune(lastProcessed)
+
+	if len(currentRunes) <= len(lastProcessedRunes) {
+		return ""
+	}
+
+	newRunes := currentRunes[len(lastProcessedRunes):]
+	newText := string(newRunes)
+
 	if newText == "" {
 		return ""
 	}
 
 	// 查找新增部分中的最后一个句子结束符（返回所有完整句子）
 	lastEndingIdx := -1
-	for i, r := range newText {
+	for i, r := range newRunes {
 		for _, ending := range m.sentenceEndings {
 			if r == ending {
 				lastEndingIdx = i
@@ -195,7 +215,7 @@ func (m *ASRStateManager) extractNewSentences(current string) string {
 	}
 
 	if lastEndingIdx >= 0 {
-		return newText[:lastEndingIdx+1]
+		return string(newRunes[:lastEndingIdx+1])
 	}
 
 	return ""
@@ -218,12 +238,12 @@ func (m *ASRStateManager) isCompleteSentence(text string) bool {
 	return false
 }
 
-// findLastSentenceEnding 查找最后一个句子结束符位置
+// findLastSentenceEnding 查找最后一个句子结束符位置（返回 rune 索引）
 func (m *ASRStateManager) findLastSentenceEnding(text string) int {
-	for i := len(text) - 1; i >= 0; i-- {
-		r, _ := utf8.DecodeRuneInString(text[i:])
+	runes := []rune(text)
+	for i := len(runes) - 1; i >= 0; i-- {
 		for _, ending := range m.sentenceEndings {
-			if r == ending {
+			if runes[i] == ending {
 				return i
 			}
 		}

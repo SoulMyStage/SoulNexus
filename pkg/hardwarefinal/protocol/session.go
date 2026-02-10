@@ -615,11 +615,9 @@ func (s *HardwareSession) onTTSComplete() {
 		s.asrPipeline.SetTTSPlaying(false)
 	}
 
-	// 清除 StateManager 状态，避免累积文本过长导致无法提取新句子
-	if s.stateManager != nil {
-		s.stateManager.Clear()
-		s.logger.Info("[Session] StateManager 状态已清除，准备接收新的对话")
-	}
+	// 注意：不要清除 StateManager！
+	// ASR 服务会持续累积文本，StateManager 需要保持状态才能正确提取增量
+	// 只在会话结束或用户明确重启时才清除
 
 	if err := s.writer.SendTTSEnd(); err != nil {
 		s.logger.Error("[TTS Pipeline] 发送 TTS 结束消息失败", zap.Error(err))
