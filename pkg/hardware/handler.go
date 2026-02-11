@@ -14,23 +14,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// HardwareOptions hardware options
 type HardwareOptions struct {
-	Conn                 *websocket.Conn
-	AssistantID          uint
-	Credential           *models.UserCredential
-	Language             string
-	Speaker              string
-	Temperature          float64
-	SystemPrompt         string
-	KnowledgeKey         string
-	UserID               uint
-	DeviceID             *string
-	MacAddress           string
-	LLMModel             string
-	MaxLLMToken          int
-	EnableVAD            bool
-	VADThreshold         float64
-	VADConsecutiveFrames int
+	Conn                 *websocket.Conn        // websocket connection
+	AssistantID          uint                   // assistant id
+	Credential           *models.UserCredential // credential
+	Language             string                 // language
+	Speaker              string                 // speaker
+	Temperature          float64                // temperature
+	SystemPrompt         string                 // ai system prompt
+	KnowledgeKey         string                 // knowledge key
+	UserID               uint                   // user id
+	DeviceID             *string                // device id
+	MacAddress           string                 // mac address
+	LLMModel             string                 // chat llm model for assistant
+	MaxLLMToken          int                    // max llm token
+	EnableVAD            bool                   // enable VAD
+	VADThreshold         float64                // VAD threshold
+	VADConsecutiveFrames int                    // VAD consecutive frames
 }
 
 // HardwareHandler hardware handler
@@ -55,21 +56,21 @@ func (h *HardwareHandler) HandlerHardwareWebsocket(
 	ctx context.Context,
 	options *HardwareOptions) {
 	if options == nil || options.AssistantID == 0 {
-		h.logger.Error("[Handler] --- options is nil or assistantID is 0")
+		h.logger.Error("options is nil or assistantID is 0 please check")
 		return
 	}
 	options.loadConfigs()
 	defer options.Conn.Close()
-	h.logger.Info(fmt.Sprintf("[Handler] --- 创建 HardwareSession assistantID: %d", options.AssistantID))
-
-	// 初始化声纹识别服务
+	h.logger.Info(fmt.Sprintf("create hardwareSession assistantID: %d", options.AssistantID))
 	voiceprintConfig := voiceprint.DefaultConfig()
+	if err := voiceprintConfig.Validate(); err != nil {
+		h.logger.Warn("[Handler] --- 验证声纹识别服务配置失败", zap.Error(err))
+	}
 	voiceprintService, err := voiceprint.NewService(voiceprintConfig, cache.GetGlobalCache())
 	if err != nil {
 		h.logger.Warn("[Handler] --- 初始化声纹识别服务失败", zap.Error(err))
 		voiceprintService = nil
 	}
-
 	session := protocol.NewHardwareSession(ctx, &protocol.HardwareSessionOption{
 		Conn:                 options.Conn,
 		Logger:               h.logger,
@@ -86,12 +87,12 @@ func (h *HardwareHandler) HandlerHardwareWebsocket(
 		VoiceprintService:    voiceprintService,
 	})
 	if err := session.Start(); err != nil {
-		h.logger.Error("[Handler] --- 启动会话失败", zap.Error(err))
+		h.logger.Error("[Handler] start session failed: ", zap.Error(err))
 		return
 	}
 	<-ctx.Done()
 	if err := session.Stop(); err != nil {
-		h.logger.Error("[Handler] --- 停止会话失败", zap.Error(err))
+		h.logger.Error("[Handler] stop session failed: ", zap.Error(err))
 	}
 }
 

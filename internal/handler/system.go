@@ -16,6 +16,7 @@ import (
 	"github.com/code-100-precent/LingEcho/pkg/constants"
 	"github.com/code-100-precent/LingEcho/pkg/response"
 	"github.com/code-100-precent/LingEcho/pkg/utils"
+	"github.com/code-100-precent/LingEcho/pkg/voiceprint"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -182,37 +183,30 @@ func (h *Handlers) getVoiceCloneConfig(provider string) map[string]interface{} {
 
 // getVoiceprintConfig gets voiceprint recognition configuration
 func (h *Handlers) getVoiceprintConfig() map[string]interface{} {
-	// Check if voiceprint service is configured
-	voiceprintServiceURL := utils.GetEnv("VOICEPRINT_SERVICE_URL")
-	voiceprintAPIKey := utils.GetEnv("VOICEPRINT_API_KEY")
+	// 使用新的配置方法
+	cfg := voiceprint.DefaultConfig()
 
-	// Check if basic configuration exists
-	if voiceprintServiceURL == "" {
-		voiceprintServiceURL = "http://localhost:7074" // Default service URL
-	}
-
-	configured := voiceprintServiceURL != "" && voiceprintAPIKey != ""
-
-	// Read enabled status from database or environment
+	// 从数据库或环境变量读取启用状态
 	enabledStr := utils.GetValue(h.db, constants.KEY_VOICEPRINT_ENABLED)
 	enabled := false
 	if enabledStr != "" {
 		enabled = enabledStr == "true"
 	} else {
-		// Fallback to environment variable
-		enabled = utils.GetEnv("VOICEPRINT_ENABLED") == "true"
+		// 回退到环境变量
+		enabled = cfg.Enabled
 	}
 
-	// Only enable if both configured and explicitly enabled
+	// 只有在配置完整且显式启用时才启用
+	configured := cfg.BaseURL != "" && cfg.APIKey != ""
 	enabled = enabled && configured
 
 	config := map[string]interface{}{
-		"service_url":          voiceprintServiceURL,
-		"api_key":              voiceprintAPIKey,
-		"similarity_threshold": utils.GetFloatEnvWithDefault("VOICEPRINT_SIMILARITY_THRESHOLD", 0.6),
-		"max_candidates":       utils.GetIntEnvWithDefault("VOICEPRINT_MAX_CANDIDATES", 10),
-		"cache_enabled":        utils.GetEnv("VOICEPRINT_CACHE_ENABLED") == "true",
-		"log_enabled":          utils.GetEnv("VOICEPRINT_LOG_ENABLED") == "true",
+		"service_url":          cfg.BaseURL,
+		"api_key":              cfg.APIKey,
+		"similarity_threshold": cfg.SimilarityThreshold,
+		"max_candidates":       cfg.MaxCandidates,
+		"cache_enabled":        cfg.CacheEnabled,
+		"log_enabled":          cfg.LogEnabled,
 	}
 
 	return map[string]interface{}{

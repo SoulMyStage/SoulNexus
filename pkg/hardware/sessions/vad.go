@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/code-100-precent/LingEcho/pkg/hardware/constants"
 	"go.uber.org/zap"
 
 	"github.com/code-100-precent/LingEcho/pkg/vad"
@@ -92,7 +93,7 @@ func (v *VADComponent) SetTTSPlayingCallback(callback func() bool) {
 
 // Name 返回组件名称
 func (v *VADComponent) Name() string {
-	return "VAD"
+	return constants.COMPONENT_VAD
 }
 
 // Process 处理音频数据

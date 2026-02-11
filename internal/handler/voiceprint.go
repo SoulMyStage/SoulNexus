@@ -16,7 +16,7 @@ import (
 
 	"github.com/code-100-precent/LingEcho/internal/models"
 	"github.com/code-100-precent/LingEcho/pkg/response"
-	"github.com/code-100-precent/LingEcho/pkg/utils"
+	"github.com/code-100-precent/LingEcho/pkg/voiceprint"
 )
 
 // GetVoiceprints 获取声纹列表
@@ -443,14 +443,9 @@ func (h *Handlers) IdentifyVoiceprint(c *gin.Context) {
 
 // callVoiceprintRegisterAPI 调用voiceprint-api注册接口
 func (h *Handlers) callVoiceprintRegisterAPI(speakerID, assistantID string, audioData []byte) error {
-	serviceURL := utils.GetEnv("VOICEPRINT_SERVICE_URL")
-	if serviceURL == "" {
-		serviceURL = utils.GetEnv("VOICEPRINT_BASE_URL")
-	}
-	if serviceURL == "" {
-		serviceURL = "http://localhost:8005"
-	}
-	apiKey := utils.GetEnv("VOICEPRINT_API_KEY")
+	cfg := voiceprint.DefaultConfig()
+	serviceURL := cfg.BaseURL
+	apiKey := cfg.APIKey
 
 	// 创建multipart form
 	var buf bytes.Buffer
@@ -497,14 +492,9 @@ func (h *Handlers) callVoiceprintRegisterAPI(speakerID, assistantID string, audi
 
 // callVoiceprintIdentifyAPI 调用voiceprint-api识别接口
 func (h *Handlers) callVoiceprintIdentifyAPI(candidateIDs []string, assistantID string, audioData []byte) (string, float64, error) {
-	serviceURL := utils.GetEnv("VOICEPRINT_SERVICE_URL")
-	if serviceURL == "" {
-		serviceURL = utils.GetEnv("VOICEPRINT_BASE_URL")
-	}
-	if serviceURL == "" {
-		serviceURL = "http://localhost:8005"
-	}
-	apiKey := utils.GetEnv("VOICEPRINT_API_KEY")
+	cfg := voiceprint.DefaultConfig()
+	serviceURL := cfg.BaseURL
+	apiKey := cfg.APIKey
 
 	// 创建multipart form
 	var buf bytes.Buffer
@@ -560,14 +550,9 @@ func (h *Handlers) callVoiceprintIdentifyAPI(candidateIDs []string, assistantID 
 
 // callVoiceprintDeleteAPI 调用voiceprint-api删除接口
 func (h *Handlers) callVoiceprintDeleteAPI(speakerID, assistantID string) error {
-	serviceURL := utils.GetEnv("VOICEPRINT_SERVICE_URL")
-	if serviceURL == "" {
-		serviceURL = utils.GetEnv("VOICEPRINT_BASE_URL")
-	}
-	if serviceURL == "" {
-		serviceURL = "http://localhost:8005"
-	}
-	apiKey := utils.GetEnv("VOICEPRINT_API_KEY")
+	cfg := voiceprint.DefaultConfig()
+	serviceURL := cfg.BaseURL
+	apiKey := cfg.APIKey
 
 	// 创建form data
 	var buf bytes.Buffer

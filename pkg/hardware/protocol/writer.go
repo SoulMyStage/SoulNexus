@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/code-100-precent/LingEcho/pkg/hardware/constants"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
@@ -57,7 +58,7 @@ func NewHardwareWriter(ctx context.Context, conn *websocket.Conn, logger *zap.Lo
 		binaryChan: make(chan []byte, WriterBufferSize),
 		ctx:        ctx,
 		cancel:     cancel,
-		sessionID:  fmt.Sprintf("hardware_%d", time.Now().UnixNano()),
+		sessionID:  fmt.Sprintf("%s%d", constants.HARDWARE_WRITER_PREFIX, time.Now().UnixNano()),
 	}
 	hw.wg.Add(2)
 	go hw.writeLoop()

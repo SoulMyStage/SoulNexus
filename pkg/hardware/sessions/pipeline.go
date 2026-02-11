@@ -62,7 +62,7 @@ type ASRPipeline struct {
 	onOutput        func(text string, isFinal bool)
 	logger          *zap.Logger
 	metrics         *PipelineMetrics
-	ttsPlaying      bool // TTS播放状态
+	ttsPlaying      bool
 	mu              sync.RWMutex
 	vadComponent    *VADComponent      // VAD 组件引用（用于设置回调）
 	asrOption       *ASRPipelineOption // 保存 ASR 配置用于重连
@@ -107,22 +107,15 @@ func NewASRPipeline(option *ASRPipelineOption, logger *zap.Logger) (*ASRPipeline
 	pipeline.inputStages = []PipelineComponent{
 		&OpusDecodeComponent{logger: logger, decoder: decode},
 	}
-
-	// 如果启用 VAD，添加 VAD 组件（使用远程 SileroVAD 服务）
 	if option.EnableVAD {
-		// 使用配置中的 VAD 服务 URL
 		vadServiceURL := option.VADServiceURL
 		if vadServiceURL == "" {
 			vadServiceURL = "http://localhost:7073" // 默认 URL
 		}
-
-		// 使用配置中的会话 ID
 		vadSessionID := option.VADSessionID
 		if vadSessionID == "" {
 			vadSessionID = "default" // 默认会话 ID
 		}
-
-		// 创建 VAD 组件
 		vadComponent, err := NewVADComponent(
 			option.EnableVAD,
 			logger,
@@ -134,45 +127,31 @@ func NewASRPipeline(option *ASRPipelineOption, logger *zap.Logger) (*ASRPipeline
 			logger.Error("[ASR Pipeline] VAD 组件初始化失败，禁用 VAD",
 				zap.Error(err),
 				zap.String("service_url", vadServiceURL))
-			// 初始化失败时继续运行，但禁用 VAD
 		} else {
-			// 设置 TTS 播放状态回调
 			vadComponent.SetTTSPlayingCallback(func() bool {
 				return pipeline.IsTTSPlaying()
 			})
-
-			// 设置连续帧数
 			if option.VADConsecutiveFrames > 0 {
 				vadComponent.SetConsecutiveFrames(option.VADConsecutiveFrames)
 			}
-
 			pipeline.inputStages = append(pipeline.inputStages, vadComponent)
-			pipeline.vadComponent = vadComponent // 保存引用
-			logger.Info("[ASR Pipeline] VAD 组件已启用",
-				zap.String("service_url", vadServiceURL),
-				zap.String("session_id", vadSessionID),
-				zap.Float64("threshold", option.VADThreshold),
-				zap.Int("consecutiveFrames", option.VADConsecutiveFrames))
+			pipeline.vadComponent = vadComponent
 		}
 	} else {
 		logger.Info("[ASR Pipeline] VAD 已禁用")
 	}
-
-	// 添加 ASR 输入组件
 	pipeline.inputStages = append(pipeline.inputStages, &ASRInputComponent{
 		asr:      pipeline.Asr,
 		logger:   logger,
 		metrics:  pipeline.metrics,
 		pipeline: pipeline,
 	})
-
 	pipeline.outputStages = []PipelineComponent{
 		&FilterWordComponent{
 			logger:      logger,
 			filterWords: make(map[string]bool),
 		},
 	}
-
 	pipeline.Asr.Init(
 		pipeline.onASRResult,
 		pipeline.onASRError,
@@ -290,28 +269,23 @@ func (p *ASRPipeline) SetTTSPlaying(playing bool) {
 	defer p.mu.Unlock()
 	p.ttsPlaying = playing
 	if !playing {
-		// 通知 AudioManager TTS 结束
 		if p.audioManager != nil {
 			p.audioManager.NotifyTTSEnd()
 		}
 	}
 }
 
-// IsTTSPlaying 检查TTS是否正在播放（包括宽限期）
+// IsTTSPlaying 检查TTS是否正在播放
 func (p *ASRPipeline) IsTTSPlaying() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
-	// 如果正在播放，直接返回true
 	if p.ttsPlaying {
 		return true
 	}
-
-	// 不再有缓冲时间，TTS 结束后立即允许 ASR 处理
 	return false
 }
 
-// ClearTTSState 清除TTS状态（用于中断）
+// ClearTTSState 清除TTS状态
 func (p *ASRPipeline) ClearTTSState() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -334,67 +308,6 @@ func (p *ASRPipeline) ResetState() {
 	p.metrics.AudioDuration = 0
 	p.metrics.RTF = 0
 	p.metrics.mu.Unlock()
-}
-
-// ASRInputComponent ASR 输入阶段（发送到 ASR）
-type ASRInputComponent struct {
-	asr      recognizer.TranscribeService
-	logger   *zap.Logger
-	metrics  *PipelineMetrics
-	pipeline *ASRPipeline // 引用父pipeline以检查TTS状态
-}
-
-func (s *ASRInputComponent) Name() string {
-	return "ASRInput"
-}
-
-func (s *ASRInputComponent) Process(ctx context.Context, data interface{}) (interface{}, bool, error) {
-	pcmData, ok := data.([]byte)
-	if !ok {
-		return nil, false, fmt.Errorf("invalid data type")
-	}
-
-	// 记录 PCM 数据大小（用于计算音频时长）
-	if s.metrics != nil {
-		s.metrics.mu.Lock()
-		s.metrics.TotalAudioBytes += len(pcmData)
-		s.metrics.mu.Unlock()
-	}
-
-	// 使用 AudioManager 处理输入音频（智能回声过滤）
-	if s.pipeline != nil && s.pipeline.audioManager != nil {
-		ttsPlaying := s.pipeline.IsTTSPlaying()
-		processedData, shouldProcess := s.pipeline.audioManager.ProcessInputAudio(pcmData, ttsPlaying)
-
-		if !shouldProcess {
-			// 音频被过滤（回声或低能量），发送静音帧保持连接
-			silentFrame := make([]byte, len(pcmData))
-			err := s.asr.SendAudioBytes(silentFrame)
-			if err != nil {
-				s.logger.Error(fmt.Sprintf("[ASRInput] 发送静音帧失败, %v", err))
-				if s.pipeline != nil {
-					go s.pipeline.TriggerReconnect()
-				}
-				return nil, false, err
-			}
-			return nil, true, nil
-		}
-
-		// 使用处理后的数据
-		pcmData = processedData
-	}
-
-	// 发送音频数据
-	err := s.asr.SendAudioBytes(pcmData)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ASRInput] 发送失败, %v", err))
-		// 触发重连
-		if s.pipeline != nil {
-			go s.pipeline.TriggerReconnect()
-		}
-		return nil, false, err
-	}
-	return nil, true, nil
 }
 
 // GetMetrics 获取性能指标（线程安全）
@@ -527,7 +440,6 @@ func (p *ASRPipeline) reconnectASR(ctx context.Context) {
 			p.logger.Info("[ASR Pipeline] 重连被取消")
 			return
 		case <-time.After(delay):
-			// 继续下一次尝试
 		}
 	}
 }
