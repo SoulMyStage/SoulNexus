@@ -232,8 +232,16 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 		s.llmProcessing = true
 		s.mu.Unlock()
 
+		// 获取 ASR 时间指标
+		metrics := pipeline.GetMetrics()
+		asrStartTime := metrics.FirstPacketTime
+		asrEndTime := time.Now()
+		if asrStartTime.IsZero() {
+			asrStartTime = asrEndTime
+		}
+
 		// 记录用户输入（在 LLM 开始处理时）
-		s.recordUserInput(incrementalText)
+		s.recordUserInput(incrementalText, asrStartTime, asrEndTime)
 
 		if err := s.writer.SendTTSStart(); err != nil {
 			s.logger.Error("[Session] 发送 TTS 开始消息失败", zap.Error(err))

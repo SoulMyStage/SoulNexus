@@ -914,8 +914,53 @@ func (h *Handlers) GetCallRecordings(c *gin.Context) {
 		return
 	}
 
+	// 构建响应数据，包含对话摘要
+	recordingList := make([]map[string]interface{}, 0)
+	for _, recording := range recordings {
+		// 获取对话详情以提取摘要信息
+		conversationDetails, _ := recording.GetConversationDetails()
+
+		recordingItem := map[string]interface{}{
+			"id":             recording.ID,
+			"userId":         recording.UserID,
+			"assistantId":    recording.AssistantID,
+			"deviceId":       recording.DeviceID,
+			"macAddress":     recording.MacAddress,
+			"sessionId":      recording.SessionID,
+			"storageUrl":     recording.StorageURL,
+			"audioFormat":    recording.AudioFormat,
+			"audioSize":      recording.AudioSize,
+			"duration":       recording.Duration,
+			"sampleRate":     recording.SampleRate,
+			"channels":       recording.Channels,
+			"callType":       recording.CallType,
+			"callStatus":     recording.CallStatus,
+			"startTime":      recording.StartTime,
+			"endTime":        recording.EndTime,
+			"summary":        recording.Summary,
+			"category":       recording.Category,
+			"isImportant":    recording.IsImportant,
+			"isArchived":     recording.IsArchived,
+			"analysisStatus": recording.AnalysisStatus,
+			"createdAt":      recording.CreatedAt,
+			// 新增字段
+			"llmModel":    recording.LLMModel,
+			"ttsProvider": recording.TTSProvider,
+			"asrProvider": recording.ASRProvider,
+		}
+
+		// 添加对话摘要信息
+		if conversationDetails != nil {
+			recordingItem["totalTurns"] = conversationDetails.TotalTurns
+			recordingItem["userTurns"] = conversationDetails.UserTurns
+			recordingItem["aiTurns"] = conversationDetails.AITurns
+		}
+
+		recordingList = append(recordingList, recordingItem)
+	}
+
 	response.Success(c, "获取成功", gin.H{
-		"recordings": recordings,
+		"recordings": recordingList,
 		"total":      total,
 		"page":       page,
 		"page_size":  pageSize,
@@ -1099,6 +1144,9 @@ func (h *Handlers) GetCallRecordingDetail(c *gin.Context) {
 		logger.Error("解析时间指标失败", zap.Error(err), zap.Uint64("recordingID", recordingID))
 	}
 
+	// 获取发音人列表
+	speakers := recording.GetSpeakers()
+
 	// 构建详细响应 - 包含所有字段
 	detailResponse := map[string]interface{}{
 		"id":              recording.ID,
@@ -1132,6 +1180,11 @@ func (h *Handlers) GetCallRecordingDetail(c *gin.Context) {
 		"autoAnalyzed":    recording.AutoAnalyzed,
 		"analysisVersion": recording.AnalysisVersion,
 		"createdAt":       recording.CreatedAt,
+		// 新增字段
+		"speakers":    speakers,
+		"llmModel":    recording.LLMModel,
+		"ttsProvider": recording.TTSProvider,
+		"asrProvider": recording.ASRProvider,
 	}
 
 	// 添加真实的对话详情数据（如果存在）
@@ -1352,16 +1405,11 @@ func (h *Handlers) CompleteMaintenance(c *gin.Context) {
 
 // generateBasicConversationDetails 基于现有数据生成基本的对话详情
 func generateBasicConversationDetails(recording models.CallRecording) map[string]interface{} {
-	// 基于用户输入和AI回复生成简单的对话轮次
-	turns := make([]map[string]interface{}, 0)
-
-	userTurns := 0
-	aiTurns := 0
-
 	// 从 ConversationDetailsJSON 中解析对话数据
 	conversationDetails, err := recording.GetConversationDetails()
 	if err == nil && conversationDetails != nil && len(conversationDetails.Turns) > 0 {
 		// 使用实际的对话数据
+		turns := make([]map[string]interface{}, 0)
 		for _, turn := range conversationDetails.Turns {
 			turnMap := map[string]interface{}{
 				"turnId":    turn.TurnID,
@@ -1373,16 +1421,38 @@ func generateBasicConversationDetails(recording models.CallRecording) map[string
 				"duration":  turn.Duration,
 			}
 
-			// 添加可选的时间指标
+			// 添加用户输入特有字段
+			if turn.ASRStartTime != nil {
+				turnMap["asrStartTime"] = turn.ASRStartTime.Format(time.RFC3339)
+			}
+			if turn.ASREndTime != nil {
+				turnMap["asrEndTime"] = turn.ASREndTime.Format(time.RFC3339)
+			}
 			if turn.ASRDuration != nil {
 				turnMap["asrDuration"] = *turn.ASRDuration
+			}
+
+			// 添加AI回复特有字段
+			if turn.LLMStartTime != nil {
+				turnMap["llmStartTime"] = turn.LLMStartTime.Format(time.RFC3339)
+			}
+			if turn.LLMEndTime != nil {
+				turnMap["llmEndTime"] = turn.LLMEndTime.Format(time.RFC3339)
 			}
 			if turn.LLMDuration != nil {
 				turnMap["llmDuration"] = *turn.LLMDuration
 			}
+			if turn.TTSStartTime != nil {
+				turnMap["ttsStartTime"] = turn.TTSStartTime.Format(time.RFC3339)
+			}
+			if turn.TTSEndTime != nil {
+				turnMap["ttsEndTime"] = turn.TTSEndTime.Format(time.RFC3339)
+			}
 			if turn.TTSDuration != nil {
 				turnMap["ttsDuration"] = *turn.TTSDuration
 			}
+
+			// 添加延迟指标
 			if turn.ResponseDelay != nil {
 				turnMap["responseDelay"] = *turn.ResponseDelay
 			}
@@ -1391,48 +1461,50 @@ func generateBasicConversationDetails(recording models.CallRecording) map[string
 			}
 
 			turns = append(turns, turnMap)
+		}
 
-			if turn.Type == "user" {
-				userTurns++
-			} else if turn.Type == "ai" {
-				aiTurns++
-			}
+		return map[string]interface{}{
+			"sessionId":     conversationDetails.SessionID,
+			"startTime":     conversationDetails.StartTime.Format(time.RFC3339),
+			"endTime":       conversationDetails.EndTime.Format(time.RFC3339),
+			"totalTurns":    conversationDetails.TotalTurns,
+			"userTurns":     conversationDetails.UserTurns,
+			"aiTurns":       conversationDetails.AITurns,
+			"interruptions": conversationDetails.Interruptions,
+			"turns":         turns,
 		}
 	}
 
 	// 如果没有任何对话数据，创建示例数据
-	if len(turns) == 0 {
-		userTurns = 1
-		aiTurns = 1
-		turns = append(turns, map[string]interface{}{
-			"turnId":    1,
-			"timestamp": recording.StartTime.Format(time.RFC3339),
-			"type":      "user",
-			"content":   "你好，我想了解一下产品信息",
-			"startTime": recording.StartTime.Format(time.RFC3339),
-			"endTime":   recording.StartTime.Add(3 * time.Second).Format(time.RFC3339),
-			"duration":  3000,
-		})
+	turns := make([]map[string]interface{}, 0)
+	turns = append(turns, map[string]interface{}{
+		"turnId":    1,
+		"timestamp": recording.StartTime.Format(time.RFC3339),
+		"type":      "user",
+		"content":   "你好，我想了解一下产品信息",
+		"startTime": recording.StartTime.Format(time.RFC3339),
+		"endTime":   recording.StartTime.Add(3 * time.Second).Format(time.RFC3339),
+		"duration":  3000,
+	})
 
-		startTime := recording.StartTime.Add(4 * time.Second)
-		turns = append(turns, map[string]interface{}{
-			"turnId":    2,
-			"timestamp": startTime.Format(time.RFC3339),
-			"type":      "ai",
-			"content":   "您好！很高兴为您服务，请问有什么可以帮助您的吗？",
-			"startTime": startTime.Format(time.RFC3339),
-			"endTime":   startTime.Add(5 * time.Second).Format(time.RFC3339),
-			"duration":  5000,
-		})
-	}
+	startTime := recording.StartTime.Add(4 * time.Second)
+	turns = append(turns, map[string]interface{}{
+		"turnId":    2,
+		"timestamp": startTime.Format(time.RFC3339),
+		"type":      "ai",
+		"content":   "您好！很高兴为您服务，请问有什么可以帮助您的吗？",
+		"startTime": startTime.Format(time.RFC3339),
+		"endTime":   startTime.Add(5 * time.Second).Format(time.RFC3339),
+		"duration":  5000,
+	})
 
 	return map[string]interface{}{
 		"sessionId":     recording.SessionID,
 		"startTime":     recording.StartTime.Format(time.RFC3339),
 		"endTime":       recording.EndTime.Format(time.RFC3339),
-		"totalTurns":    userTurns + aiTurns,
-		"userTurns":     userTurns,
-		"aiTurns":       aiTurns,
+		"totalTurns":    2,
+		"userTurns":     1,
+		"aiTurns":       1,
 		"interruptions": 0,
 		"turns":         turns,
 	}
@@ -1440,62 +1512,154 @@ func generateBasicConversationDetails(recording models.CallRecording) map[string
 
 // generateBasicTimingMetrics 基于现有数据生成基本的时间指标
 func generateBasicTimingMetrics(recording models.CallRecording) map[string]interface{} {
-	sessionDuration := recording.Duration * 1000 // 转换为毫秒
+	sessionDuration := int64(recording.Duration) * 1000 // 转换为毫秒
 
-	// 基于对话详情来统计调用次数
+	// 基于对话详情来统计调用次数和时间
 	asrCalls := 0
+	asrTotalTime := int64(0)
+	asrMinTime := int64(0)
+	asrMaxTime := int64(0)
+
 	llmCalls := 0
+	llmTotalTime := int64(0)
+	llmMinTime := int64(0)
+	llmMaxTime := int64(0)
+
 	ttsCalls := 0
+	ttsTotalTime := int64(0)
+	ttsMinTime := int64(0)
+	ttsMaxTime := int64(0)
+
+	responseDelays := make([]int64, 0)
+	totalDelays := make([]int64, 0)
 
 	conversationDetails, err := recording.GetConversationDetails()
 	if err == nil && conversationDetails != nil {
 		for _, turn := range conversationDetails.Turns {
 			if turn.Type == "user" {
 				asrCalls++
+				if turn.ASRDuration != nil {
+					asrTotalTime += *turn.ASRDuration
+					if asrMinTime == 0 || *turn.ASRDuration < asrMinTime {
+						asrMinTime = *turn.ASRDuration
+					}
+					if *turn.ASRDuration > asrMaxTime {
+						asrMaxTime = *turn.ASRDuration
+					}
+				}
 			} else if turn.Type == "ai" {
 				llmCalls++
+				if turn.LLMDuration != nil {
+					llmTotalTime += *turn.LLMDuration
+					if llmMinTime == 0 || *turn.LLMDuration < llmMinTime {
+						llmMinTime = *turn.LLMDuration
+					}
+					if *turn.LLMDuration > llmMaxTime {
+						llmMaxTime = *turn.LLMDuration
+					}
+				}
+
 				ttsCalls++
+				if turn.TTSDuration != nil {
+					ttsTotalTime += *turn.TTSDuration
+					if ttsMinTime == 0 || *turn.TTSDuration < ttsMinTime {
+						ttsMinTime = *turn.TTSDuration
+					}
+					if *turn.TTSDuration > ttsMaxTime {
+						ttsMaxTime = *turn.TTSDuration
+					}
+				}
+
+				if turn.ResponseDelay != nil {
+					responseDelays = append(responseDelays, *turn.ResponseDelay)
+				}
+				if turn.TotalDelay != nil {
+					totalDelays = append(totalDelays, *turn.TotalDelay)
+				}
 			}
 		}
 	}
 
-	// 如果没有任何数据，至少提供一些基础指标
-	if asrCalls == 0 && llmCalls == 0 {
-		asrCalls = 1
-		llmCalls = 1
-		ttsCalls = 1
+	// 计算平均值
+	asrAverageTime := int64(0)
+	if asrCalls > 0 {
+		asrAverageTime = asrTotalTime / int64(asrCalls)
+	}
+
+	llmAverageTime := int64(0)
+	if llmCalls > 0 {
+		llmAverageTime = llmTotalTime / int64(llmCalls)
+	}
+
+	ttsAverageTime := int64(0)
+	if ttsCalls > 0 {
+		ttsAverageTime = ttsTotalTime / int64(ttsCalls)
+	}
+
+	// 计算响应延迟统计
+	averageResponseDelay := int64(0)
+	minResponseDelay := int64(0)
+	maxResponseDelay := int64(0)
+	if len(responseDelays) > 0 {
+		for _, delay := range responseDelays {
+			averageResponseDelay += delay
+			if minResponseDelay == 0 || delay < minResponseDelay {
+				minResponseDelay = delay
+			}
+			if delay > maxResponseDelay {
+				maxResponseDelay = delay
+			}
+		}
+		averageResponseDelay = averageResponseDelay / int64(len(responseDelays))
+	}
+
+	// 计算总延迟统计
+	averageTotalDelay := int64(0)
+	minTotalDelay := int64(0)
+	maxTotalDelay := int64(0)
+	if len(totalDelays) > 0 {
+		for _, delay := range totalDelays {
+			averageTotalDelay += delay
+			if minTotalDelay == 0 || delay < minTotalDelay {
+				minTotalDelay = delay
+			}
+			if delay > maxTotalDelay {
+				maxTotalDelay = delay
+			}
+		}
+		averageTotalDelay = averageTotalDelay / int64(len(totalDelays))
 	}
 
 	return map[string]interface{}{
 		"sessionDuration": sessionDuration,
 		// ASR指标
 		"asrCalls":       asrCalls,
-		"asrTotalTime":   asrCalls * 1000,
-		"asrAverageTime": 1000,
-		"asrMinTime":     1000,
-		"asrMaxTime":     1000,
+		"asrTotalTime":   asrTotalTime,
+		"asrAverageTime": asrAverageTime,
+		"asrMinTime":     asrMinTime,
+		"asrMaxTime":     asrMaxTime,
 		// LLM指标
 		"llmCalls":       llmCalls,
-		"llmTotalTime":   llmCalls * 1500,
-		"llmAverageTime": 1500,
-		"llmMinTime":     1500,
-		"llmMaxTime":     1500,
+		"llmTotalTime":   llmTotalTime,
+		"llmAverageTime": llmAverageTime,
+		"llmMinTime":     llmMinTime,
+		"llmMaxTime":     llmMaxTime,
 		// TTS指标
 		"ttsCalls":       ttsCalls,
-		"ttsTotalTime":   ttsCalls * 800,
-		"ttsAverageTime": 800,
-		"ttsMinTime":     800,
-		"ttsMaxTime":     800,
+		"ttsTotalTime":   ttsTotalTime,
+		"ttsAverageTime": ttsAverageTime,
+		"ttsMinTime":     ttsMinTime,
+		"ttsMaxTime":     ttsMaxTime,
 		// 响应延迟指标
-		"responseDelays":       []int{2300},
-		"averageResponseDelay": 2300,
-		"minResponseDelay":     2300,
-		"maxResponseDelay":     2300,
+		"responseDelays":       responseDelays,
+		"averageResponseDelay": averageResponseDelay,
+		"minResponseDelay":     minResponseDelay,
+		"maxResponseDelay":     maxResponseDelay,
 		// 总延迟指标
-		"totalDelays":       []int{2500},
-		"averageTotalDelay": 2500,
-		"minTotalDelay":     2500,
-		"maxTotalDelay":     2500,
+		"totalDelays":       totalDelays,
+		"averageTotalDelay": averageTotalDelay,
+		"minTotalDelay":     minTotalDelay,
+		"maxTotalDelay":     maxTotalDelay,
 	}
 }
 

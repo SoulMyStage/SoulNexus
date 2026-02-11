@@ -45,7 +45,6 @@ import CallRecordingDetail from '@/components/CallRecordingDetail';
 interface CallRecording {
     id: number;
     sessionId: string;
-    audioPath: string;
     storageUrl?: string; // 云存储URL
     audioFormat: string;
     audioSize: number;
@@ -54,12 +53,18 @@ interface CallRecording {
     callStatus: string;
     startTime: string;
     endTime: string;
-    userInput: string;
-    aiResponse: string;
     summary: string;
     audioQuality: number;
     noiseLevel: number;
     createdAt: string;
+    // 对话相关字段
+    totalTurns?: number;
+    userTurns?: number;
+    aiTurns?: number;
+    // 提供商信息
+    llmModel?: string;
+    ttsProvider?: string;
+    asrProvider?: string;
     // AI分析相关字段
     aiAnalysis?: string;
     analysisStatus: 'pending' | 'analyzing' | 'completed' | 'failed';
@@ -620,7 +625,7 @@ const DeviceDetail: React.FC = () => {
                                                         {recording.callStatus}
                                                     </Badge>
                                                 </div>
-                                                <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                                                <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                               {formatDuration(recording.duration)}
@@ -633,6 +638,16 @@ const DeviceDetail: React.FC = () => {
                             <Calendar className="w-3 h-3" />
                                                         {new Date(recording.createdAt).toLocaleString()}
                           </span>
+                                                    {recording.totalTurns && (
+                                                      <span className="flex items-center gap-1">
+                                                        轮次: {recording.totalTurns}
+                                                      </span>
+                                                    )}
+                                                    {recording.llmModel && (
+                                                      <span className="flex items-center gap-1">
+                                                        LLM: {recording.llmModel}
+                                                      </span>
+                                                    )}
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
@@ -745,7 +760,7 @@ const DeviceDetail: React.FC = () => {
                         setSelectedRecordingDetail(null);
                     }}
                     title="通话记录详情"
-                    size="lg"
+                    size="xl"
                 >
                     {selectedRecording && (
                         <CallRecordingDetail

@@ -9,7 +9,10 @@ interface CallRecordingDetailProps {
 }
 
 const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, recordingDetail }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'metrics' | 'conversation' | 'charts'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'metrics' | 'conversation' | 'charts' | 'analysis'>('overview');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   // 格式化时长
   const formatDuration = (seconds: number) => {
@@ -25,6 +28,22 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // 格式化时间戳为可读的时间
+  const formatTime = (timestamp: string | Date | undefined) => {
+    if (!timestamp) return 'N/A';
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString('zh-CN', { 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit',
+        hour12: false 
+      });
+    } catch {
+      return 'N/A';
+    }
   };
 
   // 准备延迟趋势图数据
@@ -121,12 +140,36 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
               </div>
             </div>
 
+            {/* 提供商信息 */}
+            {(recordingDetail?.llmModel || recordingDetail?.ttsProvider || recordingDetail?.asrProvider) && (
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                {recordingDetail?.llmModel && (
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <span className="text-gray-600 dark:text-gray-400 block text-xs mb-1">LLM 模型</span>
+                    <p className="font-medium">{recordingDetail.llmModel}</p>
+                  </div>
+                )}
+                {recordingDetail?.ttsProvider && (
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <span className="text-gray-600 dark:text-gray-400 block text-xs mb-1">TTS 提供商</span>
+                    <p className="font-medium">{recordingDetail.ttsProvider}</p>
+                  </div>
+                )}
+                {recordingDetail?.asrProvider && (
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <span className="text-gray-600 dark:text-gray-400 block text-xs mb-1">ASR 提供商</span>
+                    <p className="font-medium">{recordingDetail.asrProvider}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 录音播放 */}
             <div>
               <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-2">录音播放:</h4>
               <CallAudioPlayer
                 callId={recording.sessionId}
-                audioUrl={recording.storageUrl || `/api/recordings/${recording.audioPath}`}
+                audioUrl={recording.storageUrl || `/api/recordings/${recording.sessionId}`}
                 hasAudio={true}
                 durationSeconds={recording.duration}
               />
@@ -163,6 +206,7 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                 <div className="text-blue-600 dark:text-blue-400 font-medium mb-2">ASR 语音识别</div>
                 <div className="space-y-1 text-sm">
                   <div>调用次数: {recordingDetail.timingMetricsData.asrCalls}</div>
+                  <div>总耗时: {recordingDetail.timingMetricsData.asrTotalTime}ms</div>
                   <div>平均延迟: {recordingDetail.timingMetricsData.asrAverageTime}ms</div>
                   <div>最小/最大: {recordingDetail.timingMetricsData.asrMinTime}ms / {recordingDetail.timingMetricsData.asrMaxTime}ms</div>
                 </div>
@@ -171,6 +215,7 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                 <div className="text-green-600 dark:text-green-400 font-medium mb-2">LLM 语言模型</div>
                 <div className="space-y-1 text-sm">
                   <div>调用次数: {recordingDetail.timingMetricsData.llmCalls}</div>
+                  <div>总耗时: {recordingDetail.timingMetricsData.llmTotalTime}ms</div>
                   <div>平均延迟: {recordingDetail.timingMetricsData.llmAverageTime}ms</div>
                   <div>最小/最大: {recordingDetail.timingMetricsData.llmMinTime}ms / {recordingDetail.timingMetricsData.llmMaxTime}ms</div>
                 </div>
@@ -179,6 +224,7 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                 <div className="text-purple-600 dark:text-purple-400 font-medium mb-2">TTS 语音合成</div>
                 <div className="space-y-1 text-sm">
                   <div>调用次数: {recordingDetail.timingMetricsData.ttsCalls}</div>
+                  <div>总耗时: {recordingDetail.timingMetricsData.ttsTotalTime}ms</div>
                   <div>平均延迟: {recordingDetail.timingMetricsData.ttsAverageTime}ms</div>
                   <div>最小/最大: {recordingDetail.timingMetricsData.ttsMinTime}ms / {recordingDetail.timingMetricsData.ttsMaxTime}ms</div>
                 </div>
@@ -192,6 +238,9 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                 <div className="space-y-1 text-sm">
                   <div>平均延迟: {recordingDetail.timingMetricsData.averageResponseDelay}ms</div>
                   <div>最小/最大: {recordingDetail.timingMetricsData.minResponseDelay}ms / {recordingDetail.timingMetricsData.maxResponseDelay}ms</div>
+                  {recordingDetail.timingMetricsData.responseDelays?.length > 0 && (
+                    <div>样本数: {recordingDetail.timingMetricsData.responseDelays.length}</div>
+                  )}
                 </div>
               </div>
               <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg">
@@ -199,7 +248,18 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                 <div className="space-y-1 text-sm">
                   <div>平均延迟: {recordingDetail.timingMetricsData.averageTotalDelay}ms</div>
                   <div>最小/最大: {recordingDetail.timingMetricsData.minTotalDelay}ms / {recordingDetail.timingMetricsData.maxTotalDelay}ms</div>
+                  {recordingDetail.timingMetricsData.totalDelays?.length > 0 && (
+                    <div>样本数: {recordingDetail.timingMetricsData.totalDelays.length}</div>
+                  )}
                 </div>
+              </div>
+            </div>
+
+            {/* 会话总耗时 */}
+            <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+              <div className="text-gray-600 dark:text-gray-400 font-medium mb-2">会话总耗时</div>
+              <div className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
+                {recordingDetail.timingMetricsData.sessionDuration}ms ({(recordingDetail.timingMetricsData.sessionDuration / 1000).toFixed(1)}s)
               </div>
             </div>
           </div>
@@ -208,29 +268,60 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
         {activeTab === 'conversation' && recordingDetail?.conversationDetailsData && (
           <div className="space-y-4">
             {/* 对话轮次列表 */}
-            <div className="max-h-80 overflow-y-auto space-y-2">
+            <div className="max-h-[450px] overflow-y-auto space-y-3">
               {(recordingDetail.conversationDetailsData?.turns || []).map((turn: any, index: number) => (
-                <div key={index} className={`p-3 rounded-lg ${turn.type === 'user' ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-green-50 dark:bg-green-900/20'}`}>
+                <div key={index} className={`p-4 rounded-lg border ${turn.type === 'user' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'}`}>
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
                       <Badge variant={turn.type === 'user' ? 'primary' : 'success'} size="sm">
                         {turn.type === 'user' ? '用户' : 'AI'}
                       </Badge>
                       <span className="text-xs text-gray-500">
-                        {new Date(turn.timestamp).toLocaleTimeString()}
+                        {new Date(turn.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}
                       </span>
                     </div>
                     <div className="text-xs text-gray-500">
-                      {turn.duration}ms
-                      {turn.responseDelay && <span className="ml-2">响应: {turn.responseDelay}ms</span>}
+                      总耗时: {turn.duration}ms
                     </div>
                   </div>
-                  <div className="text-sm">{turn.content}</div>
-                  {(turn.asrDuration || turn.llmDuration || turn.ttsDuration) && (
-                    <div className="mt-2 flex gap-4 text-xs text-gray-500">
-                      {turn.asrDuration && <span>ASR: {turn.asrDuration}ms</span>}
-                      {turn.llmDuration && <span>LLM: {turn.llmDuration}ms</span>}
-                      {turn.ttsDuration && <span>TTS: {turn.ttsDuration}ms</span>}
+                  <div className="text-sm mb-3 text-gray-900 dark:text-gray-100">{turn.content}</div>
+                  
+                  {/* 用户输入的时间指标 */}
+                  {turn.type === 'user' && (turn.asrStartTime || turn.asrDuration !== undefined) && (
+                    <div className="mt-3 p-3 bg-white dark:bg-gray-700 rounded border border-blue-200 dark:border-blue-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                      <div className="font-medium text-gray-700 dark:text-gray-200">🎤 ASR 语音识别</div>
+                      {turn.asrStartTime && <div>开始: {formatTime(turn.asrStartTime)}</div>}
+                      {turn.asrEndTime && <div>结束: {formatTime(turn.asrEndTime)}</div>}
+                      {turn.asrDuration !== undefined && <div>耗时: {turn.asrDuration}ms</div>}
+                    </div>
+                  )}
+
+                  {/* AI回复的时间指标 */}
+                  {turn.type === 'ai' && (
+                    <div className="mt-3 space-y-2">
+                      {(turn.llmStartTime || turn.llmDuration !== undefined) && (
+                        <div className="p-3 bg-white dark:bg-gray-700 rounded border border-green-200 dark:border-green-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                          <div className="font-medium text-gray-700 dark:text-gray-200">🧠 LLM 语言模型</div>
+                          {turn.llmStartTime && <div>开始: {formatTime(turn.llmStartTime)}</div>}
+                          {turn.llmEndTime && <div>结束: {formatTime(turn.llmEndTime)}</div>}
+                          {turn.llmDuration !== undefined && <div>耗时: {turn.llmDuration}ms</div>}
+                        </div>
+                      )}
+                      {(turn.ttsStartTime || turn.ttsDuration !== undefined) && (
+                        <div className="p-3 bg-white dark:bg-gray-700 rounded border border-purple-200 dark:border-purple-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                          <div className="font-medium text-gray-700 dark:text-gray-200">🔊 TTS 语音合成</div>
+                          {turn.ttsStartTime && <div>开始: {formatTime(turn.ttsStartTime)}</div>}
+                          {turn.ttsEndTime && <div>结束: {formatTime(turn.ttsEndTime)}</div>}
+                          {turn.ttsDuration !== undefined && <div>耗时: {turn.ttsDuration}ms</div>}
+                        </div>
+                      )}
+                      {(turn.responseDelay !== undefined || turn.totalDelay !== undefined) && (
+                        <div className="p-3 bg-white dark:bg-gray-700 rounded border border-orange-200 dark:border-orange-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                          <div className="font-medium text-gray-700 dark:text-gray-200">⏱️ 延迟指标</div>
+                          {turn.responseDelay !== undefined && <div>响应延迟: {turn.responseDelay}ms</div>}
+                          {turn.totalDelay !== undefined && <div>总延迟: {turn.totalDelay}ms</div>}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

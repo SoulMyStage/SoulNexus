@@ -593,7 +593,7 @@ func (s *HardwareSession) uploadRecordingFile(filePath string) {
 }
 
 // recordUserInput 记录用户输入
-func (s *HardwareSession) recordUserInput(asrText string) {
+func (s *HardwareSession) recordUserInput(asrText string, asrStartTime, asrEndTime time.Time) {
 	if s.callRecording == nil {
 		return
 	}
@@ -603,25 +603,29 @@ func (s *HardwareSession) recordUserInput(asrText string) {
 
 	s.currentTurnID++
 	now := time.Now()
+
+	// 计算 ASR 耗时
+	asrDuration := asrEndTime.Sub(asrStartTime).Milliseconds()
+
 	turn := models.ConversationTurn{
 		TurnID:       s.currentTurnID,
 		Timestamp:    now,
 		Type:         "user",
 		Content:      asrText,
-		StartTime:    now,
-		EndTime:      now,
-		Duration:     0,
-		ASRStartTime: &now,
-		ASREndTime:   &now,
+		StartTime:    asrStartTime,
+		EndTime:      asrEndTime,
+		Duration:     asrDuration,
+		ASRStartTime: &asrStartTime,
+		ASREndTime:   &asrEndTime,
 	}
-	asrDuration := int64(0)
 	turn.ASRDuration = &asrDuration
 
 	s.conversationTurns = append(s.conversationTurns, turn)
 
 	s.logger.Info("[Session] 记录用户输入",
 		zap.Int("turnID", s.currentTurnID),
-		zap.String("text", asrText))
+		zap.String("text", asrText),
+		zap.Int64("asrDuration", asrDuration))
 }
 
 // recordAIResponse 记录 AI 回复
