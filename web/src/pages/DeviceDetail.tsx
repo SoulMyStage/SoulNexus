@@ -766,6 +766,20 @@ const DeviceDetail: React.FC = () => {
                         <CallRecordingDetail
                             recording={selectedRecording}
                             recordingDetail={selectedRecordingDetail}
+                            onAnalyze={async (recordingId) => {
+                                await handleAnalyzeRecording(selectedRecording);
+                            }}
+                            onGetAnalysis={async (recordingId) => {
+                                try {
+                                    const response = await getCallRecordingAnalysis(recordingId);
+                                    if (response.code === 200 && response.data.analysis) {
+                                        return response.data.analysis;
+                                    }
+                                    throw new Error('获取分析结果失败');
+                                } catch (error: any) {
+                                    throw error;
+                                }
+                            }}
                         />
                     )}
                 </Modal>

@@ -12,6 +12,7 @@ import (
 
 	"github.com/code-100-precent/LingEcho/internal/models"
 	"github.com/code-100-precent/LingEcho/pkg/cache"
+	"github.com/code-100-precent/LingEcho/pkg/llm"
 	"github.com/code-100-precent/LingEcho/pkg/logger"
 	"github.com/code-100-precent/LingEcho/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -1031,6 +1032,132 @@ func (h *Handlers) AnalyzeCallRecording(c *gin.Context) {
 		response.Fail(c, "录音不存在", nil)
 		return
 	}
+	go func() {
+		ctx := context.Background()
+		conversationDetails, err := recording.GetConversationDetails()
+		if err != nil || conversationDetails == nil {
+			logger.Error("获取对话详情失败", zap.Error(err), zap.Uint("recordingID", recording.ID))
+			return
+		}
+
+		// 获取助手信息
+		var assistant models.Assistant
+		if err := h.db.Where("id = ?", recording.AssistantID).First(&assistant).Error; err != nil {
+			logger.Error("获取助手信息失败", zap.Error(err), zap.Uint("assistantID", recording.AssistantID))
+			return
+		}
+
+		// 根据 assistant 的 apiKey 和 apiSecret 获取 UserCredential
+		credential, err := models.GetUserCredentialByApiSecretAndApiKey(h.db, assistant.ApiKey, assistant.ApiSecret)
+		if err != nil || credential == nil {
+			logger.Error("获取用户凭证失败", zap.Error(err), zap.String("apiKey", assistant.ApiKey))
+			return
+		}
+
+		// 从 UserCredential 中获取 LLM 的 apiKey 和 apiURL
+		llmApiKey := credential.LLMApiKey
+		llmApiURL := credential.LLMApiURL
+		llmProvider := credential.LLMProvider
+
+		if llmApiKey == "" || llmApiURL == "" {
+			logger.Error("LLM 凭证不完整", zap.String("llmProvider", llmProvider))
+			return
+		}
+
+		// 构建对话文本
+		conversationText := ""
+		for _, turn := range conversationDetails.Turns {
+			if turn.Type == "user" {
+				conversationText += fmt.Sprintf("用户: %s\n", turn.Content)
+			} else if turn.Type == "ai" {
+				conversationText += fmt.Sprintf("AI: %s\n", turn.Content)
+			}
+		}
+
+		// 创建 LLM 提供者
+		var provider llm.LLMProvider
+		var err2 error
+
+		// 根据 LLM 提供商类型创建对应的提供者
+		if strings.Contains(strings.ToLower(llmProvider), "coze") {
+			// 使用 Coze 提供者 - 使用 credential 的 APISecret 作为认证信息
+			provider, err2 = llm.NewCozeProvider(ctx, llmApiKey, credential.APISecret, fmt.Sprintf("user_%d", user.ID), "你是一个专业的对话分析助手")
+		} else {
+			// 默认使用 OpenAI 兼容的提供者
+			provider = llm.NewOpenAIProvider(ctx, llmApiKey, llmApiURL, "你是一个专业的对话分析助手")
+		}
+
+		if err2 != nil {
+			logger.Error("创建 LLM 提供者失败", zap.Error(err2), zap.String("llmProvider", llmProvider))
+			return
+		}
+
+		// 构建分析提示词
+		analysisPrompt := fmt.Sprintf(`请分析以下对话，并提供以下信息（以 JSON 格式返回）：
+1. summary: 对话摘要（一句话）
+2. sentiment: 情感分数（-1 到 1 之间的浮点数）
+3. satisfaction: 满意度分数（0 到 1 之间的浮点数）
+4. keywords: 关键词列表
+5. category: 对话分类
+6. isImportant: 是否重要
+7. actionItems: 行动项列表
+8. issues: 问题列表
+9. insights: 深度洞察
+
+对话内容：
+%s
+
+请返回有效的 JSON 格式。`, conversationText)
+
+		// 调用 LLM 进行分析
+		result, err := provider.QueryWithOptions(analysisPrompt, llm.QueryOptions{
+			Model:       recording.LLMModel,
+			Temperature: llm.Float32Ptr(0.7),
+		})
+
+		if err != nil {
+			logger.Error("LLM 分析失败", zap.Error(err), zap.Uint("recordingID", recording.ID))
+			// 更新分析状态为失败
+			h.db.Model(&recording).Updates(map[string]interface{}{
+				"analysis_status": "failed",
+				"analysis_error":  err.Error(),
+			})
+			return
+		}
+
+		// 解析 JSON 结果
+		var analysisResult map[string]interface{}
+		if err := json.Unmarshal([]byte(result), &analysisResult); err != nil {
+			logger.Error("解析分析结果失败", zap.Error(err), zap.String("result", result))
+			// 尝试提取 JSON 部分
+			jsonStart := strings.Index(result, "{")
+			jsonEnd := strings.LastIndex(result, "}")
+			if jsonStart >= 0 && jsonEnd > jsonStart {
+				if err := json.Unmarshal([]byte(result[jsonStart:jsonEnd+1]), &analysisResult); err != nil {
+					logger.Error("提取 JSON 失败", zap.Error(err))
+					return
+				}
+			} else {
+				return
+			}
+		}
+
+		// 保存分析结果
+		analysisJSON, _ := json.Marshal(analysisResult)
+		now := time.Now()
+		err = h.db.Model(&recording).Updates(map[string]interface{}{
+			"analysis_status": "completed",
+			"ai_analysis":     string(analysisJSON),
+			"analyzed_at":     now,
+		}).Error
+
+		if err != nil {
+			logger.Error("保存分析结果失败", zap.Error(err), zap.Uint("recordingID", recording.ID))
+			return
+		}
+
+		logger.Info("通话记录分析完成", zap.Uint("recordingID", recording.ID))
+	}()
 
 	response.Success(c, "分析已启动", nil)
 }

@@ -1,18 +1,35 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
+import { FileText, TrendingUp, AlertCircle, Lightbulb, CheckCircle2, AlertTriangle, Tag, Zap, Mic, Volume2, Brain, Clock, Sparkles } from 'lucide-react';
 import Badge from '@/components/UI/Badge';
 import CallAudioPlayer from '@/components/CallAudioPlayer';
 
 interface CallRecordingDetailProps {
   recording: any;
   recordingDetail: any;
+  onAnalyze?: (recordingId: number) => Promise<any>;
+  onGetAnalysis?: (recordingId: number) => Promise<any>;
 }
 
-const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, recordingDetail }) => {
+const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, recordingDetail, onAnalyze, onGetAnalysis }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'metrics' | 'conversation' | 'charts' | 'analysis'>('overview');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  // 在组件挂载时加载已保存的分析结果
+  useEffect(() => {
+    if (recordingDetail?.aiAnalysis) {
+      try {
+        const analysis = typeof recordingDetail.aiAnalysis === 'string' 
+          ? JSON.parse(recordingDetail.aiAnalysis) 
+          : recordingDetail.aiAnalysis;
+        setAnalysisResult(analysis);
+      } catch (error) {
+        console.error('解析分析结果失败:', error);
+      }
+    }
+  }, [recordingDetail?.aiAnalysis]);
 
   // 格式化时长
   const formatDuration = (seconds: number) => {
@@ -101,6 +118,7 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
           { key: 'metrics', label: '性能指标' },
           { key: 'conversation', label: '对话详情' },
           { key: 'charts', label: '图表分析' },
+          { key: 'analysis', label: 'AI分析' },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -289,7 +307,10 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                   {/* 用户输入的时间指标 */}
                   {turn.type === 'user' && (turn.asrStartTime || turn.asrDuration !== undefined) && (
                     <div className="mt-3 p-3 bg-white dark:bg-gray-700 rounded border border-blue-200 dark:border-blue-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                      <div className="font-medium text-gray-700 dark:text-gray-200">🎤 ASR 语音识别</div>
+                      <div className="font-medium text-gray-700 dark:text-gray-200 flex items-center gap-1">
+                        <Mic className="w-4 h-4" />
+                        ASR 语音识别
+                      </div>
                       {turn.asrStartTime && <div>开始: {formatTime(turn.asrStartTime)}</div>}
                       {turn.asrEndTime && <div>结束: {formatTime(turn.asrEndTime)}</div>}
                       {turn.asrDuration !== undefined && <div>耗时: {turn.asrDuration}ms</div>}
@@ -301,7 +322,10 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                     <div className="mt-3 space-y-2">
                       {(turn.llmStartTime || turn.llmDuration !== undefined) && (
                         <div className="p-3 bg-white dark:bg-gray-700 rounded border border-green-200 dark:border-green-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                          <div className="font-medium text-gray-700 dark:text-gray-200">🧠 LLM 语言模型</div>
+                          <div className="font-medium text-gray-700 dark:text-gray-200 flex items-center gap-1">
+                            <Brain className="w-4 h-4" />
+                            LLM 语言模型
+                          </div>
                           {turn.llmStartTime && <div>开始: {formatTime(turn.llmStartTime)}</div>}
                           {turn.llmEndTime && <div>结束: {formatTime(turn.llmEndTime)}</div>}
                           {turn.llmDuration !== undefined && <div>耗时: {turn.llmDuration}ms</div>}
@@ -309,7 +333,10 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                       )}
                       {(turn.ttsStartTime || turn.ttsDuration !== undefined) && (
                         <div className="p-3 bg-white dark:bg-gray-700 rounded border border-purple-200 dark:border-purple-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                          <div className="font-medium text-gray-700 dark:text-gray-200">🔊 TTS 语音合成</div>
+                          <div className="font-medium text-gray-700 dark:text-gray-200 flex items-center gap-1">
+                            <Volume2 className="w-4 h-4" />
+                            TTS 语音合成
+                          </div>
                           {turn.ttsStartTime && <div>开始: {formatTime(turn.ttsStartTime)}</div>}
                           {turn.ttsEndTime && <div>结束: {formatTime(turn.ttsEndTime)}</div>}
                           {turn.ttsDuration !== undefined && <div>耗时: {turn.ttsDuration}ms</div>}
@@ -317,7 +344,10 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                       )}
                       {(turn.responseDelay !== undefined || turn.totalDelay !== undefined) && (
                         <div className="p-3 bg-white dark:bg-gray-700 rounded border border-orange-200 dark:border-orange-700 text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                          <div className="font-medium text-gray-700 dark:text-gray-200">⏱️ 延迟指标</div>
+                          <div className="font-medium text-gray-700 dark:text-gray-200 flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            延迟指标
+                          </div>
                           {turn.responseDelay !== undefined && <div>响应延迟: {turn.responseDelay}ms</div>}
                           {turn.totalDelay !== undefined && <div>总延迟: {turn.totalDelay}ms</div>}
                         </div>
@@ -430,6 +460,242 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'analysis' && (
+          <div className="space-y-4">
+            {!analysisResult && !isAnalyzing && (
+              <div className="text-center py-12">
+                <div className="mb-4">
+                  <div className="mb-4">
+                    <Sparkles className="w-12 h-12 text-blue-600 mx-auto" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                    AI 智能分析
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                    点击下方按钮启动 AI 分析，获取对话的深度洞察
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    setIsAnalyzing(true);
+                    setAnalysisError(null);
+                    try {
+                      if (onAnalyze) {
+                        await onAnalyze(recording.id);
+                      }
+                      if (onGetAnalysis) {
+                        const result = await onGetAnalysis(recording.id);
+                        setAnalysisResult(result);
+                      }
+                    } catch (error: any) {
+                      setAnalysisError(error?.message || '分析失败');
+                    } finally {
+                      setIsAnalyzing(false);
+                    }
+                  }}
+                  disabled={isAnalyzing}
+                  className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                    isAnalyzing
+                      ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                >
+                  {isAnalyzing ? '分析中...' : '开始分析'}
+                </button>
+              </div>
+            )}
+
+            {isAnalyzing && (
+              <div className="text-center py-12">
+                <div className="inline-block">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                </div>
+                <p className="text-gray-600 dark:text-gray-400">正在分析对话内容，请稍候...</p>
+              </div>
+            )}
+
+            {analysisError && (
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                <p className="text-red-600 dark:text-red-400">分析失败: {analysisError}</p>
+              </div>
+            )}
+
+            {analysisResult && (
+              <div className="space-y-4">
+                {/* 对话摘要 */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100">对话摘要</h4>
+                  </div>
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-gray-700 dark:text-gray-300">
+                    {analysisResult.summary}
+                  </div>
+                </div>
+
+                {/* 情感分析和满意度 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <TrendingUp className="w-5 h-5 text-green-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">情感分析</h4>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full ${
+                            analysisResult.sentiment > 0 ? 'bg-green-500' :
+                              analysisResult.sentiment < 0 ? 'bg-red-500' : 'bg-gray-400'
+                          }`}
+                          style={{
+                            width: `${Math.abs(analysisResult.sentiment) * 100}%`,
+                            marginLeft: analysisResult.sentiment < 0 ?
+                              `${(1 + analysisResult.sentiment) * 100}%` : '0'
+                          }}
+                        />
+                      </div>
+                      <span className="text-sm font-mono whitespace-nowrap">
+                        {(analysisResult.sentiment * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="w-5 h-5 text-yellow-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">满意度</h4>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div
+                          className="h-2 bg-yellow-500 rounded-full"
+                          style={{ width: `${analysisResult.satisfaction * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-sm font-mono whitespace-nowrap">
+                        {(analysisResult.satisfaction * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 分类和重要性 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Tag className="w-5 h-5 text-purple-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">分类</h4>
+                    </div>
+                    <Badge variant="muted" className="inline-block">
+                      {analysisResult.category}
+                    </Badge>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">重要性</h4>
+                    </div>
+                    <Badge variant={analysisResult.isImportant ? 'error' : 'muted'} className="inline-block">
+                      {analysisResult.isImportant ? '重要' : '普通'}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* 关键词 */}
+                {analysisResult.keywords && analysisResult.keywords.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Zap className="w-5 h-5 text-orange-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">关键词</h4>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {analysisResult.keywords.map((keyword: string, index: number) => (
+                        <Badge key={index} variant="muted" size="sm">
+                          {keyword}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 行动项 */}
+                {analysisResult.actionItems && analysisResult.actionItems.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="w-5 h-5 text-green-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">行动项</h4>
+                    </div>
+                    <ul className="space-y-2">
+                      {analysisResult.actionItems.map((item: string, index: number) => (
+                        <li key={index} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                          <span className="text-green-600 mt-1">✓</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* 问题列表 */}
+                {analysisResult.issues && analysisResult.issues.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertCircle className="w-5 h-5 text-red-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">问题</h4>
+                    </div>
+                    <ul className="space-y-2">
+                      {analysisResult.issues.map((issue: string, index: number) => (
+                        <li key={index} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                          <span className="text-red-600 mt-1">⚠</span>
+                          <span>{issue}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* 深度洞察 */}
+                {analysisResult.insights && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Lightbulb className="w-5 h-5 text-yellow-600" />
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">深度洞察</h4>
+                    </div>
+                    <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg text-sm text-gray-700 dark:text-gray-300">
+                      {analysisResult.insights}
+                    </div>
+                  </div>
+                )}
+
+                {/* 重新分析按钮 */}
+                <button
+                  onClick={async () => {
+                    setIsAnalyzing(true);
+                    setAnalysisError(null);
+                    try {
+                      if (onAnalyze) {
+                        await onAnalyze(recording.id);
+                      }
+                      if (onGetAnalysis) {
+                        const result = await onGetAnalysis(recording.id);
+                        setAnalysisResult(result);
+                      }
+                    } catch (error: any) {
+                      setAnalysisError(error?.message || '分析失败');
+                    } finally {
+                      setIsAnalyzing(false);
+                    }
+                  }}
+                  disabled={isAnalyzing}
+                  className="w-full px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 rounded-lg font-medium transition-colors"
+                >
+                  重新分析
+                </button>
               </div>
             )}
           </div>
