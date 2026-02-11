@@ -274,6 +274,16 @@ func (s *HardwareSession) Start() error {
 		return nil
 	}
 	s.active = true
+
+	// 设置设备在线状态为 true
+	if s.db != nil && s.config.MacAddress != "" {
+		if err := models.UpdateDeviceOnlineStatus(s.db, s.config.MacAddress, true); err != nil {
+			s.logger.Warn("[Session] 更新设备在线状态失败", zap.Error(err), zap.String("macAddress", s.config.MacAddress))
+		} else {
+			s.logger.Info("[Session] 设备在线状态已更新为 true", zap.String("macAddress", s.config.MacAddress))
+		}
+	}
+
 	go s.messageLoop()
 	return nil
 }
@@ -327,6 +337,8 @@ func (s *HardwareSession) Stop() error {
 	ttsPipeline := s.ttsPipeline
 	writer := s.writer
 	conn := s.conn
+	macAddress := s.config.MacAddress
+	db := s.db
 	s.mu.Unlock()
 
 	if ttsPipeline != nil {
@@ -347,6 +359,15 @@ func (s *HardwareSession) Stop() error {
 			s.logger.Debug("[Session] --- 关闭WebSocket连接时出错", zap.Error(err))
 		} else {
 			s.logger.Debug("[Session] --- WebSocket连接已关闭")
+		}
+	}
+
+	// 设置设备在线状态为 false
+	if db != nil && macAddress != "" {
+		if err := models.UpdateDeviceOnlineStatus(db, macAddress, false); err != nil {
+			s.logger.Warn("[Session] 更新设备在线状态失败", zap.Error(err), zap.String("macAddress", macAddress))
+		} else {
+			s.logger.Info("[Session] 设备在线状态已更新为 false", zap.String("macAddress", macAddress))
 		}
 	}
 
