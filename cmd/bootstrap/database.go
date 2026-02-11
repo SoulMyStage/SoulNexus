@@ -181,6 +181,5 @@ func RunMigrations(db *gorm.DB) error {
 		&models.SipCall{},
 		&models.DeviceErrorLog{},
 		&models.CallRecording{},
-		&models.DevicePerformanceLog{},
 	})
 }

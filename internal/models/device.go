@@ -315,64 +315,6 @@ func UpdateDeviceOnlineStatus(db *gorm.DB, macAddress string, isOnline bool) err
 	return UpdateDeviceStatus(db, macAddress, updates)
 }
 
-// LogDeviceError 记录设备错误
-func LogDeviceError(db *gorm.DB, deviceID, macAddress, errorType, errorLevel, errorCode, errorMsg, stackTrace, context string) error {
-	errorLog := DeviceErrorLog{
-		DeviceID:   deviceID,
-		MacAddress: macAddress,
-		ErrorType:  errorType,
-		ErrorLevel: errorLevel,
-		ErrorCode:  errorCode,
-		ErrorMsg:   errorMsg,
-		StackTrace: stackTrace,
-		Context:    context,
-	}
-
-	// 同时更新设备的错误计数和最后错误信息
-	now := time.Now()
-	db.Model(&Device{}).Where("mac_address = ?", macAddress).Updates(map[string]interface{}{
-		"error_count":   gorm.Expr("error_count + 1"),
-		"last_error":    errorMsg,
-		"last_error_at": &now,
-	})
-
-	return db.Create(&errorLog).Error
-}
-
-// LogDevicePerformance 记录设备性能数据
-func LogDevicePerformance(db *gorm.DB, deviceID, macAddress string, cpuUsage, memoryUsage, temperature float64, networkLatency int) error {
-	perfLog := DevicePerformanceLog{
-		DeviceID:       deviceID,
-		MacAddress:     macAddress,
-		CPUUsage:       cpuUsage,
-		MemoryUsage:    memoryUsage,
-		Temperature:    temperature,
-		NetworkLatency: networkLatency,
-		RecordedAt:     time.Now(),
-	}
-
-	// 同时更新设备的当前性能状态
-	db.Model(&Device{}).Where("mac_address = ?", macAddress).Updates(map[string]interface{}{
-		"cpu_usage":    cpuUsage,
-		"memory_usage": memoryUsage,
-		"temperature":  temperature,
-	})
-
-	return db.Create(&perfLog).Error
-}
-
-// GetDevicePerformanceHistory 获取设备性能历史数据
-func GetDevicePerformanceHistory(db *gorm.DB, deviceID string, hours int) ([]DevicePerformanceLog, error) {
-	var logs []DevicePerformanceLog
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
-
-	err := db.Where("device_id = ? AND recorded_at >= ?", deviceID, since).
-		Order("recorded_at ASC").
-		Find(&logs).Error
-
-	return logs, err
-}
-
 // DeviceReportReq represents device report request
 type DeviceReportReq struct {
 	Version             *FlexibleInt           `json:"version,omitempty"`
@@ -464,40 +406,4 @@ type MQTT struct {
 	Password       string `json:"password"`
 	PublishTopic   string `json:"publish_topic"`
 	SubscribeTopic string `json:"subscribe_topic"`
-}
-
-// DeviceErrorLog 设备错误日志表
-type DeviceErrorLog struct {
-	BaseModel
-	DeviceID   string    `json:"deviceId" gorm:"size:64;index;not null"` // 设备ID (MAC地址)
-	MacAddress string    `json:"macAddress" gorm:"size:64;index"`        // MAC地址
-	ErrorType  string    `json:"errorType" gorm:"size:64;index"`         // 错误类型
-	ErrorLevel string    `json:"errorLevel" gorm:"size:16;index"`        // 错误级别 (INFO, WARN, ERROR, FATAL)
-	ErrorCode  string    `json:"errorCode" gorm:"size:32"`               // 错误代码
-	ErrorMsg   string    `json:"errorMsg" gorm:"type:text"`              // 错误消息
-	StackTrace string    `json:"stackTrace" gorm:"type:text"`            // 堆栈跟踪
-	Context    string    `json:"context" gorm:"type:json"`               // 错误上下文
-	Resolved   bool      `json:"resolved" gorm:"default:false;index"`    // 是否已解决
-	ResolvedAt time.Time `json:"resolvedAt,omitempty"`                   // 解决时间
-	ResolvedBy string    `json:"resolvedBy" gorm:"size:128"`             // 解决人
-}
-
-func (DeviceErrorLog) TableName() string {
-	return "device_error_logs"
-}
-
-// DevicePerformanceLog 设备性能日志表（用于历史趋势分析）
-type DevicePerformanceLog struct {
-	BaseModel
-	DeviceID       string    `json:"deviceId" gorm:"size:64;index;not null"` // 设备ID (MAC地址)
-	MacAddress     string    `json:"macAddress" gorm:"size:64;index"`        // MAC地址
-	CPUUsage       float64   `json:"cpuUsage"`                               // CPU使用率
-	MemoryUsage    float64   `json:"memoryUsage"`                            // 内存使用率
-	Temperature    float64   `json:"temperature"`                            // 设备温度
-	NetworkLatency int       `json:"networkLatency"`                         // 网络延迟(ms)
-	RecordedAt     time.Time `json:"recordedAt" gorm:"index"`                // 记录时间
-}
-
-func (DevicePerformanceLog) TableName() string {
-	return "device_performance_logs"
 }

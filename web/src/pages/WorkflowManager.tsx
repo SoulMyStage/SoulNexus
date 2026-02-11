@@ -700,7 +700,10 @@ const WorkflowManager: React.FC = () => {
                 
                 // 建立 WebSocket 连接以接收实时日志
                 try {
-                  const wsUrl = buildWebSocketURL('/api/ws')
+                  const token = localStorage.getItem('auth_token')
+                  const wsUrl = token 
+                    ? `${buildWebSocketURL('/api/ws')}?token=${encodeURIComponent(token)}`
+                    : buildWebSocketURL('/api/ws')
                   const ws = new WebSocket(wsUrl)
                   wsRef.current = ws
                   

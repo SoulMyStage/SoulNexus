@@ -1,12 +1,13 @@
 package constants
 
 const (
-	USER_TABLE_NAME            = "users"
-	USER_CREDENTIAL_TABLE_NAME = "user_credentials"
-	USER_DEVICE_TABLE_NAME     = "user_devices"
-	LOGIN_HISTORY_TABLE_NAME   = "login_histories"
-	ACCOUNT_LOCK_TABLE_NAME    = "account_locks"
-	CALL_RECORDING_TABLE_NAME  = "call_recordings"
+	USER_TABLE_NAME             = "users"
+	USER_CREDENTIAL_TABLE_NAME  = "user_credentials"
+	USER_DEVICE_TABLE_NAME      = "user_devices"
+	LOGIN_HISTORY_TABLE_NAME    = "login_histories"
+	ACCOUNT_LOCK_TABLE_NAME     = "account_locks"
+	CALL_RECORDING_TABLE_NAME   = "call_recordings"
+	DEVICE_ERROR_LOG_TABLE_NAME = "device_error_logs"
 )
 
 // Default Value: 1024

@@ -310,6 +310,8 @@ func (s *HardwareSession) messageLoop() {
 				s.logger.Info("[Session] WebSocket 连接正常关闭", zap.Error(err))
 			} else {
 				s.logger.Error("[Session] 读取 WebSocket 消息失败", zap.Error(err))
+				// 记录WebSocket连接错误
+				s.logSessionError("WEBSOCKET", "ERROR", "WS_READ_ERROR", err.Error(), "", "Failed to read WebSocket message")
 			}
 			return
 		}
@@ -317,10 +319,14 @@ func (s *HardwareSession) messageLoop() {
 		case websocket.BinaryMessage:
 			if err := s.handleAudio(message); err != nil {
 				s.logger.Warn("[Session] 处理音频消息失败", zap.Error(err))
+				// 记录音频处理错误
+				s.logSessionError("AUDIO", "WARN", "AUDIO_PROCESS_ERROR", err.Error(), "", "Failed to process audio message")
 			}
 		case websocket.TextMessage:
 			if err := s.handleText(message); err != nil {
 				s.logger.Warn("[Session] 处理文本消息失败", zap.Error(err))
+				// 记录文本处理错误
+				s.logSessionError("TEXT", "WARN", "TEXT_PROCESS_ERROR", err.Error(), "", "Failed to process text message")
 			}
 		}
 	}
@@ -475,6 +481,25 @@ func (s *HardwareSession) onTTSComplete() {
 				s.logger.Info("[Session] 待机断开连接成功，硬件将进入待机状态")
 			}
 		}()
+	}
+}
+
+// logSessionError 记录会话中的错误
+func (s *HardwareSession) logSessionError(errorType, errorLevel, errorCode, errorMsg, stackTrace, context string) {
+	if s.db == nil || s.config.MacAddress == "" {
+		s.logger.Warn("[Session] 无法记录错误：数据库或MAC地址为空", zap.String("errorMsg", errorMsg))
+		return
+	}
+
+	deviceID := s.config.MacAddress
+	if s.callRecording != nil && s.callRecording.DeviceID != "" {
+		deviceID = s.callRecording.DeviceID
+	}
+
+	if err := models.LogDeviceError(s.db, deviceID, s.config.MacAddress, errorType, errorLevel, errorCode, errorMsg, stackTrace, context); err != nil {
+		s.logger.Error("[Session] 记录设备错误失败", zap.Error(err), zap.String("errorMsg", errorMsg))
+	} else {
+		s.logger.Info("[Session] 设备错误已记录", zap.String("errorType", errorType), zap.String("errorLevel", errorLevel), zap.String("errorMsg", errorMsg))
 	}
 }
 

@@ -19,15 +19,19 @@ func (s *HardwareSession) handleText(data []byte) error {
 	active := s.active
 	s.mu.RUnlock()
 	if !active {
-		return fmt.Errorf("[Session] session is not active")
+		err := fmt.Errorf("[Session] session is not active")
+		s.logSessionError("SESSION", "WARN", "SESSION_INACTIVE", "会话未激活", "", "Attempted to handle text message on inactive session")
+		return err
 	}
 	var msg map[string]interface{}
 	if err := json.Unmarshal(data, &msg); err != nil {
 		s.logger.Warn("解析文本消息失败", zap.Error(err))
+		s.logSessionError("MESSAGE", "WARN", "JSON_PARSE_ERROR", fmt.Sprintf("文本消息解析失败: %v", err), "", "Failed to parse JSON message")
 		return nil
 	}
 	msgType, ok := msg["type"].(string)
 	if !ok {
+		s.logSessionError("MESSAGE", "WARN", "INVALID_MESSAGE_TYPE", "消息类型无效", "", "Message type field is missing or invalid")
 		return nil
 	}
 	switch msgType {
@@ -41,6 +45,7 @@ func (s *HardwareSession) handleText(data []byte) error {
 		s.handlePingMessage()
 	default:
 		s.logger.Warn(fmt.Sprintf("[Session] --- 未知消息类型：%s", msgType))
+		s.logSessionError("MESSAGE", "WARN", "UNKNOWN_MESSAGE_TYPE", fmt.Sprintf("未知消息类型: %s", msgType), "", "Received unknown message type")
 	}
 	return nil
 }
@@ -50,6 +55,7 @@ func (s *HardwareSession) handleText(data []byte) error {
 func (s *HardwareSession) handlePingMessage() {
 	if err := s.writer.SendPong(); err != nil {
 		s.logger.Error("[Session] send pong message failed", zap.Error(err))
+		s.logSessionError("COMMUNICATION", "ERROR", "PONG_SEND_ERROR", fmt.Sprintf("发送 Pong 消息失败: %v", err), "", "Failed to send pong message")
 	}
 }
 
@@ -75,10 +81,16 @@ func (s *HardwareSession) handleListenMessage(msg map[string]interface{}) {
 func (s *HardwareSession) handleAbortMessage() {
 	s.logger.Info("[Session] 收到中断请求，停止 LLM 和 TTS")
 	if s.llmService != nil {
-		s.llmService.GetProvider().Interrupt()
+		if err := s.llmService.GetProvider().Interrupt(); err != nil {
+			s.logger.Warn("[Session] LLM 中断失败", zap.Error(err))
+			s.logSessionError("LLM", "WARN", "LLM_INTERRUPT_ERROR", fmt.Sprintf("LLM 中断失败: %v", err), "", "Failed to interrupt LLM")
+		}
 	}
 	if s.ttsPipeline != nil {
-		s.ttsPipeline.Interrupt()
+		if err := s.ttsPipeline.Interrupt(); err != nil {
+			s.logger.Warn("[Session] TTS 中断失败", zap.Error(err))
+			s.logSessionError("TTS", "WARN", "TTS_INTERRUPT_ERROR", fmt.Sprintf("TTS 中断失败: %v", err), "", "Failed to interrupt TTS")
+		}
 	}
 	if s.writer != nil {
 		s.writer.ClearTTSQueue()
@@ -92,6 +104,7 @@ func (s *HardwareSession) handleAbortMessage() {
 	if s.writer != nil {
 		if err := s.writer.SendTTSEnd(); err != nil {
 			s.logger.Error("[Session] 发送 TTS 结束消息失败", zap.Error(err))
+			s.logSessionError("COMMUNICATION", "ERROR", "TTS_END_SEND_ERROR", fmt.Sprintf("发送 TTS 结束消息失败: %v", err), "", "Failed to send TTS end message")
 		} else {
 			s.logger.Info("[Session] 已发送 TTS 结束消息")
 		}
@@ -99,6 +112,7 @@ func (s *HardwareSession) handleAbortMessage() {
 	if s.writer != nil {
 		if err := s.writer.SendAbortConfirmation(); err != nil {
 			s.logger.Error("[Session] 发送中断确认消息失败", zap.Error(err))
+			s.logSessionError("COMMUNICATION", "ERROR", "ABORT_CONFIRM_SEND_ERROR", fmt.Sprintf("发送中断确认消息失败: %v", err), "", "Failed to send abort confirmation message")
 		} else {
 			s.logger.Info("[Session] 已发送中断确认消息")
 		}
@@ -139,12 +153,14 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 	if err != nil {
 		s.mu.Unlock()
 		s.logger.Error("创建 ASR 配置失败", zap.Error(err))
+		s.logSessionError("ASR", "ERROR", "ASR_CONFIG_ERROR", fmt.Sprintf("创建 ASR 配置失败: %v", err), "", "Failed to create ASR configuration")
 		return
 	}
 	asrService, err := factory.CreateTranscriber(config)
 	if err != nil {
 		s.mu.Unlock()
 		s.logger.Error("创建 ASR 服务失败", zap.Error(err))
+		s.logSessionError("ASR", "ERROR", "ASR_SERVICE_ERROR", fmt.Sprintf("创建 ASR 服务失败: %v", err), "", "Failed to create ASR service")
 		return
 	}
 
@@ -162,6 +178,7 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 	if err != nil {
 		s.mu.Unlock()
 		s.logger.Error("创建ASRPipeline失败", zap.Error(err))
+		s.logSessionError("ASR", "ERROR", "ASR_PIPELINE_ERROR", fmt.Sprintf("创建 ASR Pipeline 失败: %v", err), "", "Failed to create ASR pipeline")
 		return
 	}
 	s.logger.Info(fmt.Sprintf(
@@ -220,6 +237,7 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 		pipeline.PrintMetrics()
 		if err := s.writer.SendASRResult(incrementalText); err != nil {
 			s.logger.Error("[Session] 发送 ASR 结果失败", zap.Error(err))
+			s.logSessionError("COMMUNICATION", "ERROR", "ASR_RESULT_SEND_ERROR", fmt.Sprintf("发送 ASR 结果失败: %v", err), "", "Failed to send ASR result")
 		}
 
 		s.mu.Lock()
@@ -245,6 +263,7 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 
 		if err := s.writer.SendTTSStart(); err != nil {
 			s.logger.Error("[Session] 发送 TTS 开始消息失败", zap.Error(err))
+			s.logSessionError("COMMUNICATION", "ERROR", "TTS_START_SEND_ERROR", fmt.Sprintf("发送 TTS 开始消息失败: %v", err), "", "Failed to send TTS start message")
 		}
 		go func(text string) {
 			receivedContent := false
@@ -264,6 +283,7 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 				if err != nil {
 					s.logger.Warn("[Session] 声纹识别失败",
 						zap.Error(err))
+					s.logSessionError("VOICEPRINT", "WARN", "VOICEPRINT_IDENTIFY_ERROR", fmt.Sprintf("声纹识别失败: %v", err), "", "Voiceprint identification failed")
 				} else {
 					s.logger.Info("[Session] 声纹识别成功",
 						zap.String("speaker_id", identified.SpeakerID),
@@ -384,18 +404,33 @@ func (s *HardwareSession) handleAudio(data []byte) error {
 	voiceprintTool := s.voiceprintTool
 	s.mu.RUnlock()
 	if !active {
-		return fmt.Errorf("[Session] 会话未激活")
+		err := fmt.Errorf("[Session] 会话未激活")
+		s.logSessionError("SESSION", "ERROR", "SESSION_INACTIVE", "会话未激活，无法处理音频", "", "Session is not active")
+		return err
 	}
 	if pipeline == nil {
-		return fmt.Errorf("[Session] ASR Pipeline 未初始化")
+		err := fmt.Errorf("[Session] ASR Pipeline 未初始化")
+		s.logSessionError("ASR", "ERROR", "PIPELINE_NOT_INITIALIZED", "ASR Pipeline 未初始化", "", "ASR Pipeline is not initialized")
+		return err
+	}
+
+	// 检查音频数据有效性
+	if len(data) == 0 {
+		s.logSessionError("AUDIO", "WARN", "EMPTY_AUDIO_DATA", "接收到空音频数据", "", "Received empty audio data")
+		return fmt.Errorf("empty audio data")
 	}
 
 	if voiceprintTool != nil {
-		voiceprintTool.AddAudioFrame(data)
+		if err := voiceprintTool.AddAudioFrame(data); err != nil {
+			s.logger.Warn("[Session] 声纹识别处理失败", zap.Error(err))
+			s.logSessionError("VOICEPRINT", "WARN", "VOICEPRINT_PROCESS_ERROR", fmt.Sprintf("声纹识别处理失败: %v", err), "", "Voiceprint processing failed")
+		}
 	}
+
 	err := pipeline.ProcessInput(s.ctx, data)
 	if err != nil {
 		s.logger.Error("[Session] ASR 处理输入失败", zap.Error(err))
+		s.logSessionError("ASR", "ERROR", "ASR_PROCESS_ERROR", fmt.Sprintf("ASR 处理失败: %v", err), "", "ASR processing failed")
 		return err
 	}
 	return nil

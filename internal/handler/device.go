@@ -836,21 +836,33 @@ func (h *Handlers) GetDeviceErrorLogs(c *gin.Context) {
 
 	offset := (page - 1) * pageSize
 
+	// 获取错误类型和级别过滤参数
+	errorType := c.Query("error_type")
+	errorLevel := c.Query("error_level")
+
 	var logs []models.DeviceErrorLog
 	var total int64
 
+	// 构建查询
+	query := h.db.Where("mac_address = ?", device.MacAddress)
+	if errorType != "" {
+		query = query.Where("error_type = ?", errorType)
+	}
+	if errorLevel != "" {
+		query = query.Where("error_level = ?", errorLevel)
+	}
+
 	// 获取总数
-	h.db.Model(&models.DeviceErrorLog{}).Where("device_id = ?", device.ID).Count(&total)
+	query.Model(&models.DeviceErrorLog{}).Count(&total)
 
 	// 获取分页数据
-	err = h.db.Where("device_id = ?", device.ID).
-		Order("created_at DESC").
+	err = query.Order("created_at DESC").
 		Limit(pageSize).
 		Offset(offset).
 		Find(&logs).Error
 
 	if err != nil {
-		logger.Error("获取设备错误日志失败", zap.Error(err), zap.String("device_id", device.ID))
+		logger.Error("获取设备错误日志失败", zap.Error(err), zap.String("mac_address", device.MacAddress))
 		response.Fail(c, "获取错误日志失败", nil)
 		return
 	}
@@ -861,6 +873,46 @@ func (h *Handlers) GetDeviceErrorLogs(c *gin.Context) {
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+// ResolveDeviceError 标记设备错误为已解决
+// POST /device/error-logs/:errorId/resolve
+func (h *Handlers) ResolveDeviceError(c *gin.Context) {
+	user := models.CurrentUser(c)
+	if user == nil {
+		response.Fail(c, "用户未登录", nil)
+		return
+	}
+
+	errorIDStr := c.Param("errorId")
+	errorID, err := strconv.ParseUint(errorIDStr, 10, 32)
+	if err != nil {
+		response.Fail(c, "错误ID格式错误", nil)
+		return
+	}
+
+	// 验证错误日志所有权
+	var errorLog models.DeviceErrorLog
+	if err := h.db.First(&errorLog, errorID).Error; err != nil {
+		response.Fail(c, "错误日志不存在", nil)
+		return
+	}
+
+	// 验证设备所有权
+	var device models.Device
+	if err := h.db.Where("mac_address = ? AND user_id = ?", errorLog.MacAddress, user.ID).First(&device).Error; err != nil {
+		response.Fail(c, "无权限操作此设备", nil)
+		return
+	}
+
+	// 标记为已解决
+	if err := models.ResolveDeviceError(h.db, uint(errorID), user.Username); err != nil {
+		logger.Error("标记错误为已解决失败", zap.Error(err), zap.Uint64("errorId", errorID))
+		response.Fail(c, "标记失败", nil)
+		return
+	}
+
+	response.Success(c, "已标记为解决", nil)
 }
 
 // GetCallRecordings 获取通话录音列表
@@ -966,48 +1018,6 @@ func (h *Handlers) GetCallRecordings(c *gin.Context) {
 		"page":       page,
 		"page_size":  pageSize,
 	})
-}
-
-// GetDevicePerformanceHistory 获取设备性能历史数据
-// GET /device/:deviceId/performance-history
-func (h *Handlers) GetDevicePerformanceHistory(c *gin.Context) {
-	user := models.CurrentUser(c)
-	if user == nil {
-		response.Fail(c, "用户未登录", nil)
-		return
-	}
-
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "设备ID不能为空", nil)
-		return
-	}
-
-	// 验证设备所有权 - 使用MAC地址查询
-	var device models.Device
-	err := h.db.Where("mac_address = ? AND user_id = ?", deviceID, user.ID).First(&device).Error
-	if err != nil {
-		response.Fail(c, "设备不存在", nil)
-		return
-	}
-
-	// 时间范围参数（小时）
-	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "24"))
-	if hours < 1 {
-		hours = 1
-	}
-	if hours > 168 { // 最多7天
-		hours = 168
-	}
-
-	logs, err := models.GetDevicePerformanceHistory(h.db, device.ID, hours)
-	if err != nil {
-		logger.Error("获取设备性能历史失败", zap.Error(err), zap.String("device_id", device.ID))
-		response.Fail(c, "获取性能历史失败", nil)
-		return
-	}
-
-	response.Success(c, "获取成功", logs)
 }
 
 // AnalyzeCallRecording 分析通话录音
@@ -1404,130 +1414,6 @@ func (h *Handlers) ServeRecordingFile(c *gin.Context) {
 
 	// 提供文件服务
 	c.File(fullPath)
-}
-
-// Device Lifecycle Management Methods
-
-// GetDeviceLifecycle 获取设备生命周期信息
-// GET /api/device/:deviceId/lifecycle
-func (h *Handlers) GetDeviceLifecycle(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	// For now, return a placeholder response since lifecycle manager is not initialized
-	// TODO: Initialize lifecycle manager in the main handlers
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// GetLifecycleOverview 获取生命周期概览
-// GET /api/device/:deviceId/lifecycle/overview
-func (h *Handlers) GetLifecycleOverview(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// GetLifecycleHistory 获取设备生命周期历史
-// GET /api/device/:deviceId/lifecycle/history
-func (h *Handlers) GetLifecycleHistory(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// TransitionDeviceStatus 手动转换设备状态
-// POST /api/device/:deviceId/lifecycle/transition
-func (h *Handlers) TransitionDeviceStatus(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// GetLifecycleMetrics 获取设备生命周期指标
-// GET /api/device/:deviceId/lifecycle/metrics
-func (h *Handlers) GetLifecycleMetrics(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// CalculateCurrentMetrics 计算当前指标
-// POST /api/device/:deviceId/lifecycle/metrics/calculate
-func (h *Handlers) CalculateCurrentMetrics(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// GetMaintenanceRecords 获取设备维护记录
-// GET /api/device/:deviceId/lifecycle/maintenance
-func (h *Handlers) GetMaintenanceRecords(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// ScheduleMaintenance 安排设备维护
-// POST /api/device/:deviceId/lifecycle/maintenance/schedule
-func (h *Handlers) ScheduleMaintenance(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// StartMaintenance 开始维护
-// POST /api/device/:deviceId/lifecycle/maintenance/start
-func (h *Handlers) StartMaintenance(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
-}
-
-// CompleteMaintenance 完成维护
-// POST /api/device/:deviceId/lifecycle/maintenance/complete
-func (h *Handlers) CompleteMaintenance(c *gin.Context) {
-	deviceID := c.Param("deviceId")
-	if deviceID == "" {
-		response.Fail(c, "Device ID is required", nil)
-		return
-	}
-
-	response.Fail(c, "Device lifecycle feature is not yet implemented", nil)
 }
 
 // generateBasicConversationDetails 基于现有数据生成基本的对话详情

@@ -470,18 +470,6 @@ func (h *Handlers) RegisterAdmin(router *gin.RouterGroup) {
 			Searchables: []string{"Name", "DisplayName", "Description", "Category", "Author"},
 			Icon:        &models.AdminIcon{SVG: string(iconChatSessionLog)},
 		},
-		// Device lifecycle management
-		{
-			Model:       &models.DeviceLifecycle{},
-			Group:       "Device",
-			Name:        "Device Lifecycle",
-			Desc:        "Device lifecycle and status management.",
-			Shows:       []string{"ID", "DeviceID", "MacAddress", "Status", "PrevStatus", "ManufactureDate", "ActivationDate", "CreatedAt"},
-			Editables:   []string{"Status", "BatchNumber", "HardwareVersion", "ActivationCode"},
-			Orderables:  []string{"CreatedAt", "ManufactureDate", "ActivationDate"},
-			Searchables: []string{"DeviceID", "MacAddress", "BatchNumber", "Status"},
-			Icon:        &models.AdminIcon{SVG: string(iconChatSessionLog)},
-		},
 		// User devices
 		{
 			Model:       &models.UserDevice{},

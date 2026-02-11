@@ -328,23 +328,11 @@ func (h *Handlers) registerDeviceRoutes(r *gin.RouterGroup) {
 		device.POST("/manual-add", h.ManualAddDevice)
 
 		// Device monitoring and management
-		device.GET("/:deviceId", h.GetDeviceDetail)                                 // Get device detail
-		device.GET("/:deviceId/error-logs", h.GetDeviceErrorLogs)                   // Get device error logs
-		device.GET("/:deviceId/performance-history", h.GetDevicePerformanceHistory) // Get performance history
-		device.GET("/call-recordings", h.GetCallRecordings)                         // Get call recordings
-		device.GET("/call-recordings/:id", h.GetCallRecordingDetail)                // Get call recording detail
-
-		// Device lifecycle management
-		device.GET("/:deviceId/lifecycle", h.GetDeviceLifecycle)                         // Get device lifecycle
-		device.GET("/:deviceId/lifecycle/overview", h.GetLifecycleOverview)              // Get lifecycle overview
-		device.GET("/:deviceId/lifecycle/history", h.GetLifecycleHistory)                // Get lifecycle history
-		device.POST("/:deviceId/lifecycle/transition", h.TransitionDeviceStatus)         // Transition device status
-		device.GET("/:deviceId/lifecycle/metrics", h.GetLifecycleMetrics)                // Get lifecycle metrics
-		device.POST("/:deviceId/lifecycle/metrics/calculate", h.CalculateCurrentMetrics) // Calculate current metrics
-		device.GET("/:deviceId/lifecycle/maintenance", h.GetMaintenanceRecords)          // Get maintenance records
-		device.POST("/:deviceId/lifecycle/maintenance/schedule", h.ScheduleMaintenance)  // Schedule maintenance
-		device.POST("/:deviceId/lifecycle/maintenance/start", h.StartMaintenance)        // Start maintenance
-		device.POST("/:deviceId/lifecycle/maintenance/complete", h.CompleteMaintenance)  // Complete maintenance
+		device.GET("/:deviceId", h.GetDeviceDetail)                       // Get device detail
+		device.GET("/:deviceId/error-logs", h.GetDeviceErrorLogs)         // Get device error logs
+		device.POST("/error-logs/:errorId/resolve", h.ResolveDeviceError) // Resolve device error
+		device.GET("/call-recordings", h.GetCallRecordings)               // Get call recordings
+		device.GET("/call-recordings/:id", h.GetCallRecordingDetail)      // Get call recording detail
 
 		// AI分析相关路由
 		device.POST("/call-recordings/:id/analyze", h.AnalyzeCallRecording)         // 分析单个录音

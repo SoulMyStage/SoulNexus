@@ -95,7 +95,7 @@ export const getDeviceDetail = async (deviceId: string): Promise<ApiResponse<Dev
 }
 
 // 获取设备错误日志
-export const getDeviceErrorLogs = async (deviceId: string, page = 1, pageSize = 20): Promise<ApiResponse<{
+export const getDeviceErrorLogs = async (deviceId: string, page = 1, pageSize = 20, errorType?: string, errorLevel?: string): Promise<ApiResponse<{
     logs: Array<{
         id: number
         deviceId: number
@@ -115,7 +115,15 @@ export const getDeviceErrorLogs = async (deviceId: string, page = 1, pageSize = 
     page: number
     pageSize: number
 }>> => {
-    return get(`/device/${deviceId}/error-logs?page=${page}&page_size=${pageSize}`)
+    let url = `/device/${deviceId}/error-logs?page=${page}&page_size=${pageSize}`
+    if (errorType) url += `&error_type=${errorType}`
+    if (errorLevel) url += `&error_level=${errorLevel}`
+    return get(url)
+}
+
+// 标记设备错误为已解决
+export const resolveDeviceError = async (errorId: number): Promise<ApiResponse<null>> => {
+    return post(`/device/error-logs/${errorId}/resolve`, {})
 }
 
 // 获取通话录音列表
@@ -173,20 +181,6 @@ export const getCallRecordings = async (params: {
     if (params.macAddress) queryParams.append('mac_address', params.macAddress)
 
     return get(`/device/call-recordings?${queryParams.toString()}`)
-}
-
-// 获取设备性能历史数据
-export const getDevicePerformanceHistory = async (deviceId: string, hours = 24): Promise<ApiResponse<Array<{
-    id: number
-    deviceId: number
-    macAddress: string
-    cpuUsage: number
-    memoryUsage: number
-    temperature: number
-    networkLatency: number
-    recordedAt: string
-}>>> => {
-    return get(`/device/${deviceId}/performance-history?hours=${hours}`)
 }
 
 // 分析通话录音

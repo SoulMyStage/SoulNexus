@@ -28,7 +28,6 @@ import {
     getDeviceErrorLogs,
     getCallRecordings,
     getCallRecordingDetail,
-    getDevicePerformanceHistory,
     analyzeCallRecording,
     batchAnalyzeCallRecordings,
     getCallRecordingAnalysis,
@@ -41,6 +40,7 @@ import Card from '@/components/UI/Card';
 import Badge from '@/components/UI/Badge';
 import Modal from '@/components/UI/Modal';
 import CallRecordingDetail from '@/components/CallRecordingDetail';
+import ErrorLogsPanel from '@/components/ErrorLogsPanel';
 
 interface CallRecording {
     id: number;
@@ -108,8 +108,6 @@ const DeviceDetail: React.FC = () => {
     const [showRecordingModal, setShowRecordingModal] = useState(false);
     const [selectedRecording, setSelectedRecording] = useState<CallRecording | null>(null);
     const [selectedRecordingDetail, setSelectedRecordingDetail] = useState<any>(null);
-    const [showErrorModal, setShowErrorModal] = useState(false);
-    const [selectedError, setSelectedError] = useState<ErrorLog | null>(null);
 
     // AI分析相关状态
     const [analyzingRecordings, setAnalyzingRecordings] = useState<Set<number>>(new Set());
@@ -131,11 +129,10 @@ const DeviceDetail: React.FC = () => {
             setIsLoading(true);
 
             // 并行获取所有数据
-            const [deviceRes, recordingsRes, errorsRes, performanceRes] = await Promise.all([
+            const [deviceRes, recordingsRes, errorsRes] = await Promise.all([
                 getDeviceDetail(deviceId),
                 getCallRecordings({ macAddress: deviceId, page: 1, pageSize: 20 }),
-                getDeviceErrorLogs(deviceId, 1, 20),
-                getDevicePerformanceHistory(deviceId, 24)
+                getDeviceErrorLogs(deviceId, 1, 20)
             ]);
 
             if (deviceRes.code === 200) {
@@ -155,10 +152,6 @@ const DeviceDetail: React.FC = () => {
 
             if (errorsRes.code === 200) {
                 setErrorLogs(errorsRes.data.logs);
-            }
-
-            if (performanceRes.code === 200) {
-                // setPerformanceData(performanceRes.data);
             }
         } catch (error: any) {
             showAlert(error?.msg || error?.message || t('device.messages.fetchDevicesFailed'), 'error');
@@ -206,17 +199,6 @@ const DeviceDetail: React.FC = () => {
         return 'text-green-500';
     };
 
-    const getErrorLevelColor = (level?: string) => {
-        if (!level) return 'text-gray-500 bg-gray-50';
-        switch (level.toLowerCase()) {
-            case 'fatal': return 'text-red-600 bg-red-100';
-            case 'error': return 'text-red-500 bg-red-50';
-            case 'warn': return 'text-yellow-500 bg-yellow-50';
-            case 'info': return 'text-blue-500 bg-blue-50';
-            default: return 'text-gray-500 bg-gray-50';
-        }
-    };
-
     const handlePlayRecording = async (recording: CallRecording) => {
         setSelectedRecording(recording);
         setShowRecordingModal(true);
@@ -230,11 +212,6 @@ const DeviceDetail: React.FC = () => {
         } catch (error) {
             console.error('获取通话记录详情失败:', error);
         }
-    };
-
-    const handleViewError = (error: ErrorLog) => {
-        setSelectedError(error);
-        setShowErrorModal(true);
     };
 
     // AI分析相关函数
@@ -698,56 +675,14 @@ const DeviceDetail: React.FC = () => {
 
                         {/* 错误日志 */}
                         <Card variant="outlined" padding="md">
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                                    错误日志
-                                </h3>
-                                <Badge variant="muted" size="sm">
-                                    {errorLogs.length} 条记录
-                                </Badge>
-                            </div>
-
-                            {errorLogs.length === 0 ? (
-                                <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                                    暂无错误记录
-                                </div>
-                            ) : (
-                                <div className="space-y-3 max-h-64 overflow-y-auto">
-                                    {errorLogs.map((error) => (
-                                        <div
-                                            key={error.id}
-                                            className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
-                                        >
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <AlertTriangle className="w-4 h-4 text-red-500" />
-                                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                            {error.errorMsg}
-                          </span>
-                                                    <Badge
-                                                        variant="muted"
-                                                        size="sm"
-                                                        className={getErrorLevelColor(error.errorLevel)}
-                                                    >
-                                                        {error.errorLevel}
-                                                    </Badge>
-                                                </div>
-                                                <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-                                                    <span>{error.errorType}</span>
-                                                    <span>{new Date(error.createdAt).toLocaleString()}</span>
-                                                </div>
-                                            </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => handleViewError(error)}
-                                            >
-                                                <Eye className="w-4 h-4" />
-                                            </Button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                                设备错误日志
+                            </h3>
+                            <ErrorLogsPanel
+                                errorLogs={errorLogs}
+                                onRefresh={fetchDeviceData}
+                                isLoading={isLoading}
+                            />
                         </Card>
                     </div>
                 </div>
@@ -936,44 +871,7 @@ const DeviceDetail: React.FC = () => {
                     )}
                 </Modal>
 
-                {/* 错误详情模态框 */}
-                <Modal
-                    isOpen={showErrorModal}
-                    onClose={() => setShowErrorModal(false)}
-                    title="错误详情"
-                >
-                    {selectedError && (
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                    <span className="text-gray-600 dark:text-gray-400">错误类型:</span>
-                                    <p>{selectedError.errorType}</p>
-                                </div>
-                                <div>
-                                    <span className="text-gray-600 dark:text-gray-400">错误级别:</span>
-                                    <Badge className={getErrorLevelColor(selectedError.errorLevel)}>
-                                        {selectedError.errorLevel}
-                                    </Badge>
-                                </div>
-                                <div>
-                                    <span className="text-gray-600 dark:text-gray-400">错误代码:</span>
-                                    <p className="font-mono">{selectedError.errorCode}</p>
-                                </div>
-                                <div>
-                                    <span className="text-gray-600 dark:text-gray-400">发生时间:</span>
-                                    <p>{new Date(selectedError.createdAt).toLocaleString()}</p>
-                                </div>
-                            </div>
 
-                            <div>
-                                <span className="text-gray-600 dark:text-gray-400">错误信息:</span>
-                                <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-sm">
-                                    {selectedError.errorMsg}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </Modal>
             </div>
         </div>
     );
