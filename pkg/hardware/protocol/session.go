@@ -59,6 +59,7 @@ type HardwareSession struct {
 	ttsServiceCache   map[string]synthesizer.SynthesisService // TTS service cache：speakerID -> service
 	db                *gorm.DB
 	voiceprintService *voiceprint.Service
+	callRecording     *models.CallRecording
 }
 
 func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOption) *HardwareSession {
@@ -119,8 +120,9 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 	if err := pipeline.Start(sessionCtx); err != nil {
 		logger.Fatal("启动 TTS Pipeline 失败", zap.Error(err))
 	}
+	sessionID := fmt.Sprintf("%s%d_%d", constants.HARDWARE_SESSION_PREFIX, hardwareConfig.AssistantID, time.Now().UnixNano())
 	session = &HardwareSession{
-		sessionID:         fmt.Sprintf("%s%d_%d", constants.HARDWARE_SESSION_PREFIX, hardwareConfig.AssistantID, time.Now().UnixNano()),
+		sessionID:         sessionID,
 		config:            hardwareConfig,
 		logger:            hardwareConfig.Logger,
 		active:            false,
@@ -135,6 +137,26 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 		ttsServiceCache:   make(map[string]synthesizer.SynthesisService),
 		db:                hardwareConfig.DB,
 		voiceprintService: hardwareConfig.VoiceprintService,
+		callRecording: &models.CallRecording{
+			UserID:      hardwareConfig.Credential.UserID,
+			AssistantID: hardwareConfig.AssistantID,
+			SessionID:   sessionID,
+			CallType:    "voice",
+			CallStatus:  "ongoing",
+			StartTime:   time.Now(),
+			LLMModel:    hardwareConfig.LLMModel,
+			TTSProvider: ttsProvider,
+		},
+	}
+	if hardwareConfig.Speaker != "" {
+		session.callRecording.AddSpeaker(hardwareConfig.Speaker)
+	}
+	if hardwareConfig.DB != nil {
+		if err := models.CreateCallRecording(hardwareConfig.DB, session.callRecording); err != nil {
+			hardwareConfig.Logger.Error("[Session] 初始化时保存通话记录失败", zap.Error(err))
+		} else {
+			hardwareConfig.Logger.Info(fmt.Sprintf("[Session] 通话记录已创建 SessionID:%s, RecordingID:%d", sessionID, uint64(session.callRecording.ID)))
+		}
 	}
 	speakerManager.SetSwitchCallback(func(speakerID string) error {
 		return session.switchSpeaker(speakerID, ttsProvider, ttsConfig)
@@ -290,6 +312,7 @@ func (s *HardwareSession) Stop() error {
 		}
 	}
 	s.active = false
+	s.saveCallRecording()
 	return nil
 }
 
@@ -298,6 +321,14 @@ func (s *HardwareSession) switchSpeaker(speakerID string, ttsProvider string, ba
 	s.logger.Info("[Session] 开始切换发音人",
 		zap.String("speaker_id", speakerID),
 		zap.String("provider", ttsProvider))
+	if s.callRecording != nil {
+		s.callRecording.AddSpeaker(speakerID)
+		if s.db != nil {
+			if err := s.db.Model(s.callRecording).Update("speakers", s.callRecording.Speakers).Error; err != nil {
+				s.logger.Warn("[Session] 更新发音人列表失败", zap.Error(err), zap.String("speaker_id", speakerID))
+			}
+		}
+	}
 
 	// 检查缓存中是否已有该发音人的 TTS 服务
 	s.mu.RLock()
@@ -385,4 +416,28 @@ func (s *HardwareSession) onTTSComplete() {
 			}
 		}()
 	}
+}
+
+// saveCallRecording 保存通话记录
+func (s *HardwareSession) saveCallRecording() {
+	if s.callRecording == nil || s.db == nil {
+		return
+	}
+	s.callRecording.EndTime = time.Now()
+	s.callRecording.Duration = int(s.callRecording.EndTime.Sub(s.callRecording.StartTime).Seconds())
+	s.callRecording.CallStatus = "completed"
+	if err := s.db.Model(s.callRecording).Updates(map[string]interface{}{
+		"end_time":    s.callRecording.EndTime,
+		"duration":    s.callRecording.Duration,
+		"call_status": "completed",
+		"speakers":    s.callRecording.Speakers,
+	}).Error; err != nil {
+		s.logger.Error("[Session] 更新通话记录失败", zap.Error(err))
+		return
+	}
+	s.logger.Info("[Session] 通话记录已更新",
+		zap.Uint64("recordingID", uint64(s.callRecording.ID)),
+		zap.String("sessionID", s.callRecording.SessionID),
+		zap.Int("duration", s.callRecording.Duration),
+		zap.String("speakers", s.callRecording.Speakers))
 }
