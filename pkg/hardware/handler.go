@@ -2,123 +2,117 @@ package hardware
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
+	"github.com/code-100-precent/LingEcho/pkg/cache"
+	"github.com/code-100-precent/LingEcho/pkg/hardware/constants"
+	"github.com/code-100-precent/LingEcho/pkg/hardware/protocol"
+	"github.com/code-100-precent/LingEcho/pkg/voiceprint"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-// Handler WebSocket处理器
-type Handler struct {
-	logger *zap.Logger
+type HardwareOptions struct {
+	Conn                 *websocket.Conn
+	AssistantID          uint
+	Credential           *models.UserCredential
+	Language             string
+	Speaker              string
+	Temperature          float64
+	SystemPrompt         string
+	KnowledgeKey         string
+	UserID               uint
+	DeviceID             *string
+	MacAddress           string
+	LLMModel             string
+	MaxLLMToken          int
+	EnableVAD            bool
+	VADThreshold         float64
+	VADConsecutiveFrames int
 }
 
-// NewHandler 创建新的处理器
-func NewHandler(logger *zap.Logger) *Handler {
+// HardwareHandler hardware handler
+type HardwareHandler struct {
+	logger *zap.Logger
+	db     *gorm.DB
+}
+
+// NewHardwareHandler create hardware handler
+func NewHardwareHandler(db *gorm.DB, logger *zap.Logger) *HardwareHandler {
 	if logger == nil {
 		logger = zap.L()
 	}
-	return &Handler{
+	return &HardwareHandler{
 		logger: logger,
+		db:     db,
 	}
 }
 
-// HandleWebSocket 处理WebSocket连接
-func (h *Handler) HandleWebSocket(
+// HandlerHardwareWebsocket handler hardware websocket
+func (h *HardwareHandler) HandlerHardwareWebsocket(
 	ctx context.Context,
-	conn *websocket.Conn,
-	credential *models.UserCredential,
-	assistantID int,
-	language, speaker string,
-	temperature float64,
-	systemPrompt string,
-	knowledgeKey string,
-	db *gorm.DB,
-	userID uint,
-	deviceID *string,
-	macAddress string,
-) {
-	defer conn.Close()
-
-	// 查询助手配置（获取LLM模型等）
-	llmModel := DefaultLLMModel
-	assistantTemperature := 0.6
-	assistantMaxTokens := 70
-	enableVAD := true
-	vadThreshold := 500.0
-	vadConsecutiveFrames := 2
-	if assistantID > 0 && db != nil {
-		var assistant models.Assistant
-		if err := db.First(&assistant, assistantID).Error; err == nil {
-			if assistant.LLMModel != "" {
-				llmModel = assistant.LLMModel
-			}
-			if assistant.Temperature > 0 {
-				assistantTemperature = float64(assistant.Temperature)
-			}
-			if assistant.MaxTokens > 0 {
-				assistantMaxTokens = assistant.MaxTokens
-			}
-			// 读取 VAD 配置
-			enableVAD = assistant.EnableVAD
-			if assistant.VADThreshold > 0 {
-				vadThreshold = assistant.VADThreshold
-			}
-			if assistant.VADConsecutiveFrames > 0 {
-				vadConsecutiveFrames = assistant.VADConsecutiveFrames
-			}
-		}
+	options *HardwareOptions) {
+	if options == nil || options.AssistantID == 0 {
+		h.logger.Error("[Handler] --- options is nil or assistantID is 0")
+		return
 	}
+	options.loadConfigs()
+	defer options.Conn.Close()
+	h.logger.Info(fmt.Sprintf("[Handler] --- 创建 HardwareSession assistantID: %d", options.AssistantID))
 
-	// 如果temperature为0或未设置，使用assistant的temperature
-	if temperature <= 0 {
-		temperature = assistantTemperature
-	}
-
-	// 创建会话配置
-	config := &SessionConfig{
-		Conn:         conn,
-		Credential:   credential,
-		AssistantID:  uint(assistantID), // 转换为uint类型
-		Language:     language,
-		Speaker:      speaker,
-		Temperature:  temperature,
-		MaxTokens:    assistantMaxTokens,
-		SystemPrompt: systemPrompt,
-		KnowledgeKey: knowledgeKey,
-		LLMModel:     llmModel,
-		DB:           db,
-		Logger:       h.logger,
-		Context:      ctx,
-		// VAD 配置
-		EnableVAD:            enableVAD,
-		VADThreshold:         vadThreshold,
-		VADConsecutiveFrames: vadConsecutiveFrames,
-		// 设备信息
-		UserID:     userID,
-		DeviceID:   deviceID,
-		MacAddress: macAddress,
-	}
-
-	// 创建会话
-	session, err := NewSession(config)
+	// 初始化声纹识别服务
+	voiceprintConfig := voiceprint.DefaultConfig()
+	voiceprintService, err := voiceprint.NewService(voiceprintConfig, cache.GetGlobalCache())
 	if err != nil {
-		h.logger.Error("创建会话失败", zap.Error(err))
-		return
+		h.logger.Warn("[Handler] --- 初始化声纹识别服务失败", zap.Error(err))
+		voiceprintService = nil
 	}
 
-	// 启动会话
+	session := protocol.NewHardwareSession(ctx, &protocol.HardwareSessionOption{
+		Conn:                 options.Conn,
+		Logger:               h.logger,
+		AssistantID:          options.AssistantID,
+		LLMModel:             options.LLMModel,
+		Credential:           options.Credential,
+		SystemPrompt:         options.SystemPrompt,
+		MaxToken:             options.MaxLLMToken,
+		Speaker:              options.Speaker,
+		EnableVAD:            options.EnableVAD,
+		VADThreshold:         options.VADThreshold,
+		VADConsecutiveFrames: options.VADConsecutiveFrames,
+		DB:                   h.db,
+		VoiceprintService:    voiceprintService,
+	})
 	if err := session.Start(); err != nil {
-		h.logger.Error("启动会话失败", zap.Error(err))
+		h.logger.Error("[Handler] --- 启动会话失败", zap.Error(err))
 		return
 	}
-
-	// 等待会话结束
 	<-ctx.Done()
-
-	// 停止会话
 	if err := session.Stop(); err != nil {
-		h.logger.Error("停止会话失败", zap.Error(err))
+		h.logger.Error("[Handler] --- 停止会话失败", zap.Error(err))
 	}
+}
+
+func (ho *HardwareOptions) loadConfigs() *HardwareOptions {
+	if ho.LLMModel == "" {
+		ho.LLMModel = constants.DefaultLLMModel
+	}
+	if ho.Temperature <= 0 {
+		ho.Temperature = constants.DefaultTemperature
+	}
+	if ho.EnableVAD == false {
+		ho.EnableVAD = constants.DefaultEnabledVAD
+	}
+	if ho.VADThreshold <= 0 {
+		ho.VADThreshold = constants.DefaultVADThreshold
+	}
+	if ho.VADConsecutiveFrames <= 0 {
+		ho.VADConsecutiveFrames = constants.DefaultVADConsecutiveFrames
+	}
+	if ho.MaxLLMToken <= 0 {
+		ho.MaxLLMToken = constants.DefaultMaxLLMToken
+	}
+	return ho
 }

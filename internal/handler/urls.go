@@ -264,6 +264,9 @@ func (h *Handlers) registerSystemRoutes(r *gin.RouterGroup) {
 
 		// Voiceprint configuration routes
 		system.POST("/voiceprint/config", models.AuthRequired, h.SaveVoiceprintConfig)
+
+		// Audio file upload route
+		system.POST("/upload/audio", h.UploadAudio)
 	}
 
 	// Voiceprint management routes (separate from system group)
@@ -623,7 +626,6 @@ func (h *Handlers) registerVoiceTrainingRoutes(r *gin.RouterGroup) {
 
 	// 无需认证的接口
 	voice.GET("/lingecho/v1/", h.HandleHardwareWebSocketVoice)
-	voice.GET("/lingecho/v2/", h.HandleHardwareWebSocketVoice1)
 	voice.POST("/simple_text_chat", h.SimpleTextChat) // 简单文本对话（无需token验证）
 
 	// 需要认证的接口

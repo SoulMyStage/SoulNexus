@@ -7,6 +7,7 @@ export interface VoiceprintRecord {
   speaker_id: string
   assistant_id: string
   speaker_name: string
+  description?: string
   created_at: string
   updated_at: string
   last_used?: string
@@ -24,11 +25,13 @@ export interface CreateVoiceprintRequest {
   speaker_id: string
   assistant_id: string
   speaker_name: string
+  description?: string
 }
 
 // 更新声纹请求
 export interface UpdateVoiceprintRequest {
   speaker_name?: string
+  description?: string
 }
 
 // 声纹识别响应
@@ -64,12 +67,16 @@ export const createVoiceprint = async (data: CreateVoiceprintRequest): Promise<A
 export const registerVoiceprint = async (
   assistantId: string,
   speakerName: string,
-  audioFile: File
+  audioFile: File,
+  description?: string
 ): Promise<ApiResponse<VoiceprintRecord>> => {
   const formData = new FormData()
   formData.append('assistant_id', assistantId)
   formData.append('speaker_name', speakerName)
   formData.append('audio_file', audioFile)
+  if (description) {
+    formData.append('description', description)
+  }
 
   return post('/voiceprint/register', formData)
 }

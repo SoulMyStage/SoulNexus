@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Mic, Users, Shield, Save, Plus, Trash2, User, Volume2, Bot, AlertCircle, Play, TestTube } from 'lucide-react'
+import { Mic, Users, Shield, Save, Plus, Trash2, User, Volume2, Bot, AlertCircle, Play, TestTube, Edit2 } from 'lucide-react'
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
 import Button from '@/components/UI/Button'
 import Input from '@/components/UI/Input'
@@ -18,6 +18,7 @@ import {
   deleteVoiceprint,
   identifyVoiceprint,
   verifyVoiceprint,
+  updateVoiceprint,
   VoiceprintRecord,
   VoiceprintIdentifyResponse,
   VoiceprintVerifyResponse
@@ -33,10 +34,13 @@ const VoiceprintManagement = () => {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showTestModal, setShowTestModal] = useState(false)
   const [showVerifyModal, setShowVerifyModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [selectedVoiceprint, setSelectedVoiceprint] = useState<VoiceprintRecord | null>(null)
   const [voiceprintToDelete, setVoiceprintToDelete] = useState<VoiceprintRecord | null>(null)
-  const [newSpeaker, setNewSpeaker] = useState({ name: '', audioFile: null as File | null })
+  const [newSpeaker, setNewSpeaker] = useState({ name: '', description: '', audioFile: null as File | null })
+  const [editingSpeaker, setEditingSpeaker] = useState({ name: '', description: '' })
+  const [isEditingVoiceprint, setIsEditingVoiceprint] = useState(false)
   const [testAudioFile, setTestAudioFile] = useState<File | null>(null)
   const [verifyAudioFile, setVerifyAudioFile] = useState<File | null>(null)
   const [testResult, setTestResult] = useState<VoiceprintIdentifyResponse | null>(null)
@@ -123,14 +127,15 @@ const VoiceprintManagement = () => {
       const response = await registerVoiceprint(
         selectedAssistantId,
         newSpeaker.name,
-        newSpeaker.audioFile
+        newSpeaker.audioFile,
+        newSpeaker.description
       )
 
       if (response.code === 200) {
         const selectedAssistant = assistants.find(a => String(a.id) === selectedAssistantId)
         showAlert(`${t('voiceprint.register.success')} ${selectedAssistant?.name}`, 'success', t('voiceprint.register.success'))
         setShowAddModal(false)
-        setNewSpeaker({ name: '', audioFile: null })
+        setNewSpeaker({ name: '', description: '', audioFile: null })
         await loadVoiceprints()
       } else {
         throw new Error(response.msg || t('voiceprint.register.failed'))
@@ -145,6 +150,44 @@ const VoiceprintManagement = () => {
   const handleDeleteVoiceprint = async (voiceprint: VoiceprintRecord) => {
     setVoiceprintToDelete(voiceprint)
     setShowDeleteConfirm(true)
+  }
+
+  const handleEditVoiceprint = (voiceprint: VoiceprintRecord) => {
+    setSelectedVoiceprint(voiceprint)
+    setEditingSpeaker({
+      name: voiceprint.speaker_name,
+      description: voiceprint.description || ''
+    })
+    setShowEditModal(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!selectedVoiceprint || !editingSpeaker.name) {
+      showAlert('请填写姓名', 'warning', '参数错误')
+      return
+    }
+
+    setIsEditingVoiceprint(true)
+    try {
+      const response = await updateVoiceprint(selectedVoiceprint.id, {
+        speaker_name: editingSpeaker.name,
+        description: editingSpeaker.description
+      })
+
+      if (response.code === 200) {
+        showAlert(`${t('voiceprint.update.success')} ${editingSpeaker.name}`, 'success', t('voiceprint.update.success'))
+        setShowEditModal(false)
+        setSelectedVoiceprint(null)
+        setEditingSpeaker({ name: '', description: '' })
+        await loadVoiceprints()
+      } else {
+        throw new Error(response.msg || t('voiceprint.update.failed'))
+      }
+    } catch (error: any) {
+      showAlert(error?.msg || error?.message || t('voiceprint.update.failed'), 'error', t('voiceprint.update.failed'))
+    } finally {
+      setIsEditingVoiceprint(false)
+    }
   }
 
   const confirmDeleteVoiceprint = async () => {
@@ -400,17 +443,22 @@ const VoiceprintManagement = () => {
                               key={voiceprint.id}
                               className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg"
                             >
-                              <div className="flex items-center gap-4">
+                              <div className="flex items-center gap-4 flex-1">
                                 <div className="p-2 bg-purple-100 dark:bg-purple-900/20 rounded-lg">
                                   <User className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                                 </div>
-                                <div>
+                                <div className="flex-1">
                                   <h3 className="font-medium text-gray-900 dark:text-white">
                                     {voiceprint.speaker_name}
                                   </h3>
                                   <p className="text-sm text-gray-600 dark:text-gray-400">
                                     ID: {voiceprint.speaker_id} • 注册时间: {new Date(voiceprint.created_at).toLocaleString()}
                                   </p>
+                                  {voiceprint.description && (
+                                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                      描述: {voiceprint.description}
+                                    </p>
+                                  )}
                                   {voiceprint.last_used && (
                                     <p className="text-xs text-gray-500 dark:text-gray-500">
                                       最后使用: {new Date(voiceprint.last_used).toLocaleString()}
@@ -432,6 +480,15 @@ const VoiceprintManagement = () => {
                                     </div>
                                   </div>
                                 )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditVoiceprint(voiceprint)}
+                                  className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                  title="编辑声纹"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -510,11 +567,11 @@ const VoiceprintManagement = () => {
 
       {/* 添加声纹模态框 */}
       <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)}>
-        <ModalContent className="max-w-lg">
+        <ModalContent className="max-w-2xl">
           <ModalHeader>
             <ModalTitle>添加声纹</ModalTitle>
           </ModalHeader>
-          <div className="space-y-6">
+          <div className="space-y-6 max-h-[70vh] overflow-y-auto">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 说话人姓名 <span className="text-red-500">*</span>
@@ -532,6 +589,22 @@ const VoiceprintManagement = () => {
             </div>
 
             <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                描述信息
+              </label>
+              <textarea
+                value={newSpeaker.description}
+                onChange={(e) => setNewSpeaker(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="输入说话人的描述，如：身份、职业、成就等（可选）"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400"
+                rows={3}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                可以记录说话人的身份、职业、成就等信息，便于后续识别和管理
+              </p>
+            </div>
+
+            <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
                 音频文件 <span className="text-red-500">*</span>
               </label>
@@ -543,13 +616,13 @@ const VoiceprintManagement = () => {
               />
               <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                 <h4 className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">
-                  录音建议
+                  {t('voiceTraining.audioRequirements')}
                 </h4>
                 <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
-                  <li>• 录音时长：3-10秒为最佳</li>
-                  <li>• 环境要求：安静无噪音的环境</li>
+                  <li>{t('voiceTraining.audioReq.duration')}</li>
+                  <li>{t('voiceTraining.audioReq.quiet')}</li>
                   <li>• 说话内容：清晰朗读一段文字</li>
-                  <li>• 音频质量：采样率16kHz，单声道</li>
+                  <li>{t('voiceTraining.audioReq.sampleRate')}，{t('voiceTraining.audioReq.mono')}</li>
                 </ul>
               </div>
             </div>
@@ -573,7 +646,7 @@ const VoiceprintManagement = () => {
                 variant="ghost"
                 onClick={() => {
                   setShowAddModal(false)
-                  setNewSpeaker({ name: '', audioFile: null })
+                  setNewSpeaker({ name: '', description: '', audioFile: null })
                 }}
               >
                 取消
@@ -598,8 +671,8 @@ const VoiceprintManagement = () => {
         setTestAudioFile(null)
         setTestResult(null)
       }}>
-        <ModalContent className="max-w-2xl">
-          <div className="space-y-6">
+        <ModalContent className="max-w-3xl">
+          <div className="space-y-6 max-h-[70vh] overflow-y-auto">
             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
               <div className="flex items-start space-x-3">
                 <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
@@ -730,14 +803,14 @@ const VoiceprintManagement = () => {
         setVerifyResult(null)
         setSelectedVoiceprint(null)
       }}>
-        <ModalContent className="max-w-2xl">
+        <ModalContent className="max-w-3xl">
           <ModalHeader>
             <ModalTitle className="flex items-center gap-2">
               <Shield className="w-5 h-5" />
               验证声纹
             </ModalTitle>
           </ModalHeader>
-          <div className="space-y-6">
+          <div className="space-y-6 max-h-[70vh] overflow-y-auto">
             {selectedVoiceprint && (
               <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
                 <div className="flex items-start space-x-3">
@@ -901,6 +974,92 @@ const VoiceprintManagement = () => {
                 关闭
               </Button>
             </div>
+          </div>
+        </ModalContent>
+      </Modal>
+
+      {/* 编辑声纹模态框 */}
+      <Modal isOpen={showEditModal} onClose={() => {
+        setShowEditModal(false)
+        setSelectedVoiceprint(null)
+        setEditingSpeaker({ name: '', description: '' })
+      }}>
+        <ModalContent className="max-w-2xl">
+          <ModalHeader>
+            <ModalTitle className="flex items-center gap-2">
+              <Edit2 className="w-5 h-5" />
+              编辑声纹
+            </ModalTitle>
+          </ModalHeader>
+          <div className="space-y-6">
+            {selectedVoiceprint && (
+              <>
+                <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
+                  <div className="flex items-start space-x-3">
+                    <User className="w-5 h-5 text-purple-600 dark:text-purple-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-purple-900 dark:text-purple-100">
+                        声纹信息
+                      </p>
+                      <p className="text-xs text-purple-700 dark:text-purple-300 mt-1">
+                        ID: {selectedVoiceprint.speaker_id}
+                      </p>
+                      <p className="text-xs text-purple-700 dark:text-purple-300">
+                        注册时间: {new Date(selectedVoiceprint.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    说话人姓名 <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    type="text"
+                    value={editingSpeaker.name}
+                    onChange={(e) => setEditingSpeaker(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="输入说话人的姓名"
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    描述信息
+                  </label>
+                  <textarea
+                    value={editingSpeaker.description}
+                    onChange={(e) => setEditingSpeaker(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="输入说话人的描述，如：身份、职业、成就等"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400"
+                    rows={4}
+                  />
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setShowEditModal(false)
+                      setSelectedVoiceprint(null)
+                      setEditingSpeaker({ name: '', description: '' })
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={handleSaveEdit}
+                    loading={isEditingVoiceprint}
+                    leftIcon={<Save className="w-4 h-4" />}
+                    disabled={!editingSpeaker.name}
+                  >
+                    保存修改
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </ModalContent>
       </Modal>

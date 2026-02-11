@@ -10,6 +10,7 @@ type Voiceprint struct {
 	SpeakerID     string    `json:"speaker_id" gorm:"type:varchar(255);not null"`
 	AssistantID   string    `json:"assistant_id" gorm:"type:varchar(255);not null"`
 	SpeakerName   string    `json:"speaker_name" gorm:"type:varchar(255)"`
+	Description   string    `json:"description" gorm:"type:text;comment:用户描述：身份、职业、成就等"`
 	FeatureVector []byte    `json:"-" gorm:"type:longblob;not null"`
 	CreatedAt     time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt     time.Time `json:"updated_at" gorm:"autoUpdateTime"`
@@ -25,11 +26,13 @@ type VoiceprintCreateRequest struct {
 	SpeakerID   string `json:"speaker_id" binding:"required"`
 	AssistantID string `json:"assistant_id" binding:"required"`
 	SpeakerName string `json:"speaker_name" binding:"required"`
+	Description string `json:"description"`
 }
 
 // VoiceprintUpdateRequest 更新声纹请求
 type VoiceprintUpdateRequest struct {
 	SpeakerName string `json:"speaker_name"`
+	Description string `json:"description"`
 }
 
 // VoiceprintResponse 声纹响应
@@ -38,6 +41,7 @@ type VoiceprintResponse struct {
 	SpeakerID   string     `json:"speaker_id"`
 	AssistantID string     `json:"assistant_id"`
 	SpeakerName string     `json:"speaker_name"`
+	Description string     `json:"description"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	LastUsed    *time.Time `json:"last_used,omitempty"`

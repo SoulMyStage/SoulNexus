@@ -42,6 +42,7 @@ func (h *Handlers) GetVoiceprints(c *gin.Context) {
 			SpeakerID:   vp.SpeakerID,
 			AssistantID: vp.AssistantID,
 			SpeakerName: vp.SpeakerName,
+			Description: vp.Description,
 			CreatedAt:   vp.CreatedAt,
 			UpdatedAt:   vp.UpdatedAt,
 		}
@@ -74,6 +75,7 @@ func (h *Handlers) CreateVoiceprint(c *gin.Context) {
 		SpeakerID:     req.SpeakerID,
 		AssistantID:   req.AssistantID,
 		SpeakerName:   req.SpeakerName,
+		Description:   req.Description,
 		FeatureVector: []byte{}, // 初始为空，等待音频上传后更新
 	}
 
@@ -87,6 +89,7 @@ func (h *Handlers) CreateVoiceprint(c *gin.Context) {
 		SpeakerID:   voiceprint.SpeakerID,
 		AssistantID: voiceprint.AssistantID,
 		SpeakerName: voiceprint.SpeakerName,
+		Description: voiceprint.Description,
 		CreatedAt:   voiceprint.CreatedAt,
 		UpdatedAt:   voiceprint.UpdatedAt,
 	})
@@ -96,6 +99,7 @@ func (h *Handlers) CreateVoiceprint(c *gin.Context) {
 func (h *Handlers) RegisterVoiceprint(c *gin.Context) {
 	assistantID := c.PostForm("assistant_id")
 	speakerName := c.PostForm("speaker_name")
+	description := c.PostForm("description")
 
 	if assistantID == "" || speakerName == "" {
 		response.Fail(c, "assistant_id and speaker_name are required", nil)
@@ -145,12 +149,13 @@ func (h *Handlers) RegisterVoiceprint(c *gin.Context) {
 		SpeakerID:     speakerID,
 		AssistantID:   assistantID,
 		SpeakerName:   speakerName,
+		Description:   description,
 		FeatureVector: []byte{}, // 特征向量由Python服务管理
 	}
 
 	// 使用UPSERT操作：如果存在则更新，不存在则创建
 	if err := h.db.Where("speaker_id = ? AND assistant_id = ?", speakerID, assistantID).
-		Assign(models.Voiceprint{SpeakerName: speakerName}).
+		Assign(models.Voiceprint{SpeakerName: speakerName, Description: description}).
 		FirstOrCreate(&voiceprint).Error; err != nil {
 		response.Fail(c, "Failed to update voiceprint record: "+err.Error(), nil)
 		return
@@ -161,6 +166,7 @@ func (h *Handlers) RegisterVoiceprint(c *gin.Context) {
 		SpeakerID:   voiceprint.SpeakerID,
 		AssistantID: voiceprint.AssistantID,
 		SpeakerName: voiceprint.SpeakerName,
+		Description: voiceprint.Description,
 		CreatedAt:   voiceprint.CreatedAt,
 		UpdatedAt:   voiceprint.UpdatedAt,
 	})
@@ -191,14 +197,23 @@ func (h *Handlers) UpdateVoiceprint(c *gin.Context) {
 		return
 	}
 
-	// 更新字段
+	// 构建更新数据
+	updateData := map[string]interface{}{}
 	if req.SpeakerName != "" {
+		updateData["speaker_name"] = req.SpeakerName
 		voiceprint.SpeakerName = req.SpeakerName
 	}
+	if req.Description != "" {
+		updateData["description"] = req.Description
+		voiceprint.Description = req.Description
+	}
 
-	if err := h.db.Save(&voiceprint).Error; err != nil {
-		response.Fail(c, "Failed to update voiceprint: "+err.Error(), nil)
-		return
+	// 只更新指定的字段
+	if len(updateData) > 0 {
+		if err := h.db.Model(&voiceprint).Updates(updateData).Error; err != nil {
+			response.Fail(c, "Failed to update voiceprint: "+err.Error(), nil)
+			return
+		}
 	}
 
 	response.Success(c, "Voiceprint updated successfully", models.VoiceprintResponse{
@@ -206,6 +221,7 @@ func (h *Handlers) UpdateVoiceprint(c *gin.Context) {
 		SpeakerID:   voiceprint.SpeakerID,
 		AssistantID: voiceprint.AssistantID,
 		SpeakerName: voiceprint.SpeakerName,
+		Description: voiceprint.Description,
 		CreatedAt:   voiceprint.CreatedAt,
 		UpdatedAt:   voiceprint.UpdatedAt,
 	})

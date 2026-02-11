@@ -45,9 +45,6 @@ func NewLingEchoApp(db *gorm.DB) *LingEchoApp {
 func (app *LingEchoApp) RegisterRoutes(r *gin.Engine) {
 	// Register system routes (with /api prefix)
 	app.handlers.Register(r)
-
-	// Register file upload handler
-	handlers.NewUploadHandler().Register(r)
 }
 
 func main() {
@@ -57,6 +54,8 @@ func main() {
 	}
 
 	// 2. Parse Command Line Parameters
+	init := flag.Bool("init", false, "initialize database")
+	seed := flag.Bool("seed", false, "seed database")
 	mode := flag.String("mode", "", "running environment (development, test, production)")
 	initSQL := flag.String("init-sql", "", "path to database init .sql script (optional)")
 	flag.Parse()
@@ -82,9 +81,9 @@ func main() {
 
 	// 7. Load Data Source
 	db, err := bootstrap.SetupDatabase(os.Stdout, &bootstrap.Options{
-		InitSQLPath: *initSQL,                             // Can be specified via --init-sql
-		AutoMigrate: false,                                // Whether to migrate entities
-		SeedNonProd: os.Getenv("APP_ENV") != "production", // Non-production default configuration
+		InitSQLPath: *initSQL, // Can be specified via --init-sql
+		AutoMigrate: *init,    // Whether to migrate entities
+		SeedNonProd: *seed,    // Non-production default configuration
 	})
 	if err != nil {
 		logger.Error("database setup failed", zap.Error(err))
