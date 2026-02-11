@@ -479,14 +479,12 @@ func (h *Handlers) UploadAudio(c *gin.Context) {
 	randomStr := utils.RandString(8)
 	fileName := fmt.Sprintf("audio_%d_%s.webm", timestamp, randomStr)
 	storageKey := fmt.Sprintf("audio/%s", fileName)
-
-	lingstorage := lingstorage.UploadFromReaderRequest{
+	reader, err := config.GlobalStore.UploadFromReader(&lingstorage.UploadFromReaderRequest{
 		Reader:   file,
 		Bucket:   config.GlobalConfig.Services.Storage.Bucket,
 		Filename: storageKey,
 		Key:      storageKey,
-	}
-	reader, err := config.GlobalStore.UploadFromReader(&lingstorage)
+	})
 	if err != nil {
 		response.Fail(c, "Failed to upload file: "+err.Error(), nil)
 		return

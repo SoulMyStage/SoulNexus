@@ -3,10 +3,13 @@ package protocol
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/LingByte/lingstorage-sdk-go"
 	"github.com/code-100-precent/LingEcho/internal/models"
+	"github.com/code-100-precent/LingEcho/pkg/config"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/constants"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/sessions"
 	"github.com/code-100-precent/LingEcho/pkg/hardware/stream"
@@ -34,6 +37,8 @@ type HardwareSessionOption struct {
 	VADConsecutiveFrames int
 	DB                   *gorm.DB
 	VoiceprintService    *voiceprint.Service
+	DeviceID             *string // 设备ID
+	MacAddress           string  // MAC地址
 }
 
 // HardwareSession hardware session
@@ -60,6 +65,9 @@ type HardwareSession struct {
 	db                *gorm.DB
 	voiceprintService *voiceprint.Service
 	callRecording     *models.CallRecording
+	recorder          *AudioRecorder
+	conversationTurns []models.ConversationTurn // 对话轮次列表
+	currentTurnID     int                       // 当前轮次ID
 }
 
 func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOption) *HardwareSession {
@@ -109,6 +117,12 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 			}
 			return writer.SendTTSAudioWithFlowControl(data, 60, 60)
 		},
+		RecordCallback: func(data []byte) error {
+			if sessionRef != nil && sessionRef.recorder != nil {
+				return sessionRef.recorder.WriteAudio(data)
+			}
+			return nil
+		},
 		GetPendingCountFunc: func() int { return writer.GetBinaryChannelLength() },
 		TargetSampleRate:    16000,
 		FrameDuration:       60 * time.Millisecond,
@@ -141,11 +155,20 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 			UserID:      hardwareConfig.Credential.UserID,
 			AssistantID: hardwareConfig.AssistantID,
 			SessionID:   sessionID,
+			DeviceID: func() string {
+				if hardwareConfig.DeviceID != nil {
+					return *hardwareConfig.DeviceID
+				}
+				return ""
+			}(),
+			MacAddress:  hardwareConfig.MacAddress,
 			CallType:    "voice",
 			CallStatus:  "ongoing",
 			StartTime:   time.Now(),
+			EndTime:     time.Now(), // 初始化为当前时间，后续会更新
 			LLMModel:    hardwareConfig.LLMModel,
 			TTSProvider: ttsProvider,
+			ASRProvider: hardwareConfig.Credential.GetASRProvider(),
 		},
 	}
 	if hardwareConfig.Speaker != "" {
@@ -157,6 +180,15 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 		} else {
 			hardwareConfig.Logger.Info(fmt.Sprintf("[Session] 通话记录已创建 SessionID:%s, RecordingID:%d", sessionID, uint64(session.callRecording.ID)))
 		}
+	}
+
+	// 初始化录音器（本地文件存储）
+	recordingDir := fmt.Sprintf("recordings/%d/%d", hardwareConfig.Credential.UserID, hardwareConfig.AssistantID)
+	recordingFile := fmt.Sprintf("%s/%s.wav", recordingDir, sessionID)
+	if recorder, err := NewAudioRecorder(recordingFile, 16000, 1, 16, hardwareConfig.Logger); err != nil {
+		hardwareConfig.Logger.Warn("[Session] 初始化录音器失败", zap.Error(err))
+	} else {
+		session.recorder = recorder
 	}
 	speakerManager.SetSwitchCallback(func(speakerID string) error {
 		return session.switchSpeaker(speakerID, ttsProvider, ttsConfig)
@@ -287,31 +319,38 @@ func (s *HardwareSession) messageLoop() {
 // Stop stop hardware session
 func (s *HardwareSession) Stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.active {
+		s.mu.Unlock()
 		return nil
 	}
-	if s.ttsPipeline != nil {
-		if err := s.ttsPipeline.Stop(); err != nil {
+	s.active = false
+	ttsPipeline := s.ttsPipeline
+	writer := s.writer
+	conn := s.conn
+	s.mu.Unlock()
+
+	if ttsPipeline != nil {
+		if err := ttsPipeline.Stop(); err != nil {
 			s.logger.Error("[Session] --- 停止 TTS Pipeline 失败", zap.Error(err))
 		}
 	}
 	s.cancel()
-	if s.writer != nil {
-		s.writer.Close()
+	if writer != nil {
+		writer.Close()
 	}
-	if s.conn != nil {
+	if conn != nil {
 		closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-		if err := s.conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(time.Second)); err != nil {
+		if err := conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(time.Second)); err != nil {
 			s.logger.Debug("[Session] --- 发送WebSocket关闭消息失败", zap.Error(err))
 		}
-		if err := s.conn.Close(); err != nil {
+		if err := conn.Close(); err != nil {
 			s.logger.Debug("[Session] --- 关闭WebSocket连接时出错", zap.Error(err))
 		} else {
 			s.logger.Debug("[Session] --- WebSocket连接已关闭")
 		}
 	}
-	s.active = false
+
+	// 在释放锁后调用 saveCallRecording
 	s.saveCallRecording()
 	return nil
 }
@@ -420,24 +459,261 @@ func (s *HardwareSession) onTTSComplete() {
 
 // saveCallRecording 保存通话记录
 func (s *HardwareSession) saveCallRecording() {
-	if s.callRecording == nil || s.db == nil {
+	s.logger.Info("[Session] saveCallRecording 被调用")
+
+	if s.callRecording == nil {
+		s.logger.Warn("[Session] callRecording 为 nil，无法保存")
 		return
 	}
+
+	if s.db == nil {
+		s.logger.Warn("[Session] db 为 nil，无法保存")
+		return
+	}
+
 	s.callRecording.EndTime = time.Now()
 	s.callRecording.Duration = int(s.callRecording.EndTime.Sub(s.callRecording.StartTime).Seconds())
 	s.callRecording.CallStatus = "completed"
+
+	s.logger.Info("[Session] 准备保存对话详情",
+		zap.Int("conversationTurns", len(s.conversationTurns)))
+
+	// 保存对话详情
+	s.saveConversationDetails()
+
+	// 处理录音数据
+	if s.recorder != nil {
+		// 关闭录音器
+		if err := s.recorder.Stop(); err != nil {
+			s.logger.Error("[Session] 关闭录音器失败", zap.Error(err))
+		}
+
+		// 获取本地文件路径
+		filePath := s.recorder.GetFilePath()
+		if filePath != "" {
+			// 异步上传到存储服务
+			go s.uploadRecordingFile(filePath)
+
+			// 设置存储URL为本地路径（后续会更新为远程URL）
+			s.callRecording.StorageURL = filePath
+		}
+
+		// 更新录音相关信息
+		s.callRecording.AudioSize = s.recorder.GetTotalBytes()
+		s.callRecording.Duration = s.recorder.GetDuration()
+		s.callRecording.AudioFormat = "wav"
+		s.callRecording.SampleRate = 16000
+		s.callRecording.Channels = 1
+	}
+
+	s.logger.Info("[Session] 准备更新数据库",
+		zap.Uint64("recordingID", uint64(s.callRecording.ID)),
+		zap.String("sessionID", s.callRecording.SessionID))
+
 	if err := s.db.Model(s.callRecording).Updates(map[string]interface{}{
-		"end_time":    s.callRecording.EndTime,
-		"duration":    s.callRecording.Duration,
-		"call_status": "completed",
-		"speakers":    s.callRecording.Speakers,
+		"end_time":             s.callRecording.EndTime,
+		"duration":             s.callRecording.Duration,
+		"call_status":          "completed",
+		"speakers":             s.callRecording.Speakers,
+		"audio_size":           s.callRecording.AudioSize,
+		"audio_format":         s.callRecording.AudioFormat,
+		"sample_rate":          s.callRecording.SampleRate,
+		"channels":             s.callRecording.Channels,
+		"storage_url":          s.callRecording.StorageURL,
+		"conversation_details": s.callRecording.ConversationDetailsJSON,
 	}).Error; err != nil {
 		s.logger.Error("[Session] 更新通话记录失败", zap.Error(err))
 		return
 	}
+
 	s.logger.Info("[Session] 通话记录已更新",
 		zap.Uint64("recordingID", uint64(s.callRecording.ID)),
 		zap.String("sessionID", s.callRecording.SessionID),
 		zap.Int("duration", s.callRecording.Duration),
+		zap.Int64("audioSize", s.callRecording.AudioSize),
+		zap.String("storageURL", s.callRecording.StorageURL),
 		zap.String("speakers", s.callRecording.Speakers))
+}
+
+// uploadRecordingFile 上传录音文件到存储服务
+func (s *HardwareSession) uploadRecordingFile(filePath string) {
+	if s.callRecording == nil {
+		return
+	}
+
+	// 生成存储路径
+	storageKey := fmt.Sprintf("recordings/%d/%d/%s.wav",
+		s.callRecording.UserID,
+		s.callRecording.AssistantID,
+		s.callRecording.SessionID)
+
+	s.logger.Info("[Session] 开始上传录音文件",
+		zap.String("localPath", filePath),
+		zap.String("storageKey", storageKey))
+
+	// 读取本地文件
+	wavData, err := os.ReadFile(filePath)
+	if err != nil {
+		s.logger.Error("[Session] 读取录音文件失败", zap.Error(err), zap.String("filePath", filePath))
+		return
+	}
+
+	s.logger.Info("[Session] 录音文件已读取",
+		zap.String("filePath", filePath),
+		zap.Int("fileSize", len(wavData)))
+
+	// 上传到存储服务
+	result, err := config.GlobalStore.UploadBytes(&lingstorage.UploadBytesRequest{
+		Bucket:   config.GlobalConfig.Services.Storage.Bucket,
+		Data:     wavData,
+		Filename: storageKey,
+	})
+
+	if err != nil {
+		s.logger.Error("[Session] 上传录音文件失败", zap.Error(err), zap.String("storageKey", storageKey))
+		return
+	}
+
+	s.logger.Info("[Session] 录音文件上传成功",
+		zap.String("storageKey", storageKey),
+		zap.String("storageURL", result.URL))
+
+	// 更新数据库中的存储URL
+	if err := s.db.Model(s.callRecording).Update("storage_url", result.URL).Error; err != nil {
+		s.logger.Error("[Session] 更新存储URL失败", zap.Error(err))
+		return
+	}
+
+	// 上传完成后删除本地文件
+	if err := os.Remove(filePath); err != nil {
+		s.logger.Warn("[Session] 删除本地录音文件失败", zap.Error(err), zap.String("filePath", filePath))
+	} else {
+		s.logger.Info("[Session] 本地录音文件已删除", zap.String("filePath", filePath))
+	}
+}
+
+// recordUserInput 记录用户输入
+func (s *HardwareSession) recordUserInput(asrText string) {
+	if s.callRecording == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.currentTurnID++
+	now := time.Now()
+	turn := models.ConversationTurn{
+		TurnID:       s.currentTurnID,
+		Timestamp:    now,
+		Type:         "user",
+		Content:      asrText,
+		StartTime:    now,
+		EndTime:      now,
+		Duration:     0,
+		ASRStartTime: &now,
+		ASREndTime:   &now,
+	}
+	asrDuration := int64(0)
+	turn.ASRDuration = &asrDuration
+
+	s.conversationTurns = append(s.conversationTurns, turn)
+
+	s.logger.Info("[Session] 记录用户输入",
+		zap.Int("turnID", s.currentTurnID),
+		zap.String("text", asrText))
+}
+
+// recordAIResponse 记录 AI 回复
+func (s *HardwareSession) recordAIResponse(llmResponse string, llmStartTime, llmEndTime, ttsStartTime, ttsEndTime time.Time) {
+	if s.callRecording == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.currentTurnID++
+	turn := models.ConversationTurn{
+		TurnID:       s.currentTurnID,
+		Timestamp:    time.Now(),
+		Type:         "ai",
+		Content:      llmResponse,
+		StartTime:    llmStartTime,
+		EndTime:      ttsEndTime,
+		Duration:     ttsEndTime.Sub(llmStartTime).Milliseconds(),
+		LLMStartTime: &llmStartTime,
+		LLMEndTime:   &llmEndTime,
+		TTSStartTime: &ttsStartTime,
+		TTSEndTime:   &ttsEndTime,
+	}
+
+	llmDuration := llmEndTime.Sub(llmStartTime).Milliseconds()
+	turn.LLMDuration = &llmDuration
+	ttsDuration := ttsEndTime.Sub(ttsStartTime).Milliseconds()
+	turn.TTSDuration = &ttsDuration
+
+	// 计算响应延迟（从用户说话结束到 AI 开始回复）
+	if len(s.conversationTurns) > 0 {
+		lastUserTurn := s.conversationTurns[len(s.conversationTurns)-1]
+		if lastUserTurn.Type == "user" {
+			responseDelay := llmStartTime.Sub(lastUserTurn.EndTime).Milliseconds()
+			turn.ResponseDelay = &responseDelay
+
+			// 计算总延迟（从用户说话结束到 AI 回复完成）
+			totalDelay := ttsEndTime.Sub(lastUserTurn.EndTime).Milliseconds()
+			turn.TotalDelay = &totalDelay
+		}
+	}
+
+	s.conversationTurns = append(s.conversationTurns, turn)
+
+	s.logger.Info("[Session] 记录 AI 回复",
+		zap.Int("turnID", s.currentTurnID),
+		zap.String("text", llmResponse),
+		zap.Duration("duration", time.Duration(turn.Duration)*time.Millisecond))
+}
+
+// saveConversationDetails 保存对话详情到数据库
+func (s *HardwareSession) saveConversationDetails() {
+	if s.callRecording == nil || s.db == nil {
+		return
+	}
+
+	s.mu.RLock()
+	turns := make([]models.ConversationTurn, len(s.conversationTurns))
+	copy(turns, s.conversationTurns)
+	s.mu.RUnlock()
+
+	details := &models.ConversationDetails{
+		SessionID:  s.callRecording.SessionID,
+		StartTime:  s.callRecording.StartTime,
+		EndTime:    s.callRecording.EndTime,
+		TotalTurns: len(turns),
+		Turns:      turns,
+	}
+
+	// 统计用户和 AI 的轮次
+	for _, turn := range turns {
+		if turn.Type == "user" {
+			details.UserTurns++
+		} else if turn.Type == "ai" {
+			details.AITurns++
+		}
+	}
+
+	if err := s.callRecording.SetConversationDetails(details); err != nil {
+		s.logger.Error("[Session] 设置对话详情失败", zap.Error(err))
+		return
+	}
+
+	if err := s.db.Model(s.callRecording).Update("conversation_details", s.callRecording.ConversationDetailsJSON).Error; err != nil {
+		s.logger.Error("[Session] 保存对话详情失败", zap.Error(err))
+		return
+	}
+
+	s.logger.Info("[Session] 对话详情已保存",
+		zap.Int("totalTurns", details.TotalTurns),
+		zap.Int("userTurns", details.UserTurns),
+		zap.Int("aiTurns", details.AITurns))
 }

@@ -85,6 +85,8 @@ func (h *HardwareHandler) HandlerHardwareWebsocket(
 		VADConsecutiveFrames: options.VADConsecutiveFrames,
 		DB:                   h.db,
 		VoiceprintService:    voiceprintService,
+		DeviceID:             options.DeviceID,
+		MacAddress:           options.MacAddress,
 	})
 	if err := session.Start(); err != nil {
 		h.logger.Error("[Handler] start session failed: ", zap.Error(err))

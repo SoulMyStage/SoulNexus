@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/code-100-precent/LingEcho/pkg/hardware/constants"
 	"github.com/code-100-precent/LingEcho/pkg/media"
 	"github.com/code-100-precent/LingEcho/pkg/media/encoder"
 	"github.com/code-100-precent/LingEcho/pkg/recognizer"
@@ -60,6 +61,7 @@ type ASRPipeline struct {
 	Asr             recognizer.TranscribeService
 	outputStages    []PipelineComponent
 	onOutput        func(text string, isFinal bool)
+	onPCMAudio      func(data []byte) error // PCM 音频记录回调
 	logger          *zap.Logger
 	metrics         *PipelineMetrics
 	ttsPlaying      bool
@@ -225,7 +227,9 @@ func (p *ASRPipeline) ProcessInput(ctx context.Context, audioData []byte) error 
 	p.metrics.mu.Unlock()
 
 	current := interface{}(audioData)
-	for _, stage := range p.inputStages {
+	var pcmData []byte // 保存解码后的 PCM 数据
+
+	for i, stage := range p.inputStages {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -244,7 +248,21 @@ func (p *ASRPipeline) ProcessInput(ctx context.Context, audioData []byte) error 
 			return nil
 		}
 
+		// 在 OpusDecodeComponent 之后保存 PCM 数据
+		if i == 0 && stage.Name() == constants.COMPONENT_OPUS_DECODE {
+			if data, ok := result.([]byte); ok {
+				pcmData = data
+			}
+		}
+
 		current = result
+	}
+
+	// 调用 PCM 音频记录回调
+	if pcmData != nil && p.onPCMAudio != nil {
+		if err := p.onPCMAudio(pcmData); err != nil {
+			p.logger.Warn("[Pipeline] PCM 音频记录失败", zap.Error(err))
+		}
 	}
 
 	return nil
@@ -253,6 +271,11 @@ func (p *ASRPipeline) ProcessInput(ctx context.Context, audioData []byte) error 
 // SetOutputCallback 设置输出回调
 func (p *ASRPipeline) SetOutputCallback(callback func(text string, isFinal bool)) {
 	p.onOutput = callback
+}
+
+// SetPCMAudioCallback 设置 PCM 音频记录回调
+func (p *ASRPipeline) SetPCMAudioCallback(callback func(data []byte) error) {
+	p.onPCMAudio = callback
 }
 
 // SetBargeInCallback 设置 Barge-in 回调（当 VAD 检测到用户说话时触发）

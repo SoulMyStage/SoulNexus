@@ -17,6 +17,7 @@ type TTSPipelineConfig struct {
 	GetPendingCountFunc func() int              // 获取待发送包数量的回调
 	TargetSampleRate    int                     // 目标采样率，默认 16000
 	FrameDuration       time.Duration           // 帧时长，默认 60ms
+	RecordCallback      func(data []byte) error // 录音回调（用于记录AI音频）
 	Logger              *zap.Logger
 }
 
@@ -38,7 +39,8 @@ type TTSPipeline struct {
 	completeMu          sync.Mutex
 	completionCancel    context.CancelFunc // 用于取消上一个 waitForCompletion
 	completionCancelMu  sync.Mutex
-	getPendingCountFunc func() int // 获取待发送包数量的回调
+	getPendingCountFunc func() int              // 获取待发送包数量的回调
+	recordCallback      func(data []byte) error // 录音回调
 }
 
 // NewTTSPipeline 创建 TTS 管道
@@ -80,6 +82,7 @@ func NewTTSPipeline(config *TTSPipelineConfig) (*TTSPipeline, error) {
 		currentPlayID:       uuid.New().String(),
 		logger:              config.Logger,
 		getPendingCountFunc: config.GetPendingCountFunc,
+		recordCallback:      config.RecordCallback,
 	}
 
 	// 创建 Segmenter，传入 TTS 处理回调
@@ -170,6 +173,14 @@ func (p *TTSPipeline) processTTSSegment(segment TextSegment) {
 				PlayID:     segment.PlayID,
 				Sequence:   sequence,
 			}
+
+			// 记录AI音频
+			if p.recordCallback != nil {
+				if err := p.recordCallback(frameData); err != nil {
+					p.logger.Warn("Recording AI audio failed", zap.Error(err))
+				}
+			}
+
 			select {
 			case p.audioCh <- frame:
 			case <-p.ctx.Done():
@@ -200,6 +211,14 @@ func (p *TTSPipeline) processTTSSegment(segment TextSegment) {
 			PlayID:     segment.PlayID,
 			Sequence:   sequence,
 		}
+
+		// 记录AI音频
+		if p.recordCallback != nil {
+			if err := p.recordCallback(buffer); err != nil {
+				p.logger.Warn("Recording AI audio failed", zap.Error(err))
+			}
+		}
+
 		select {
 		case p.audioCh <- frame:
 		case <-p.ctx.Done():

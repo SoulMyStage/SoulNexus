@@ -168,6 +168,17 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 		"Session create new Session sessionID:%s vad:%v, vadThreshold:%f, vadConsecultiveFrames:%d",
 		s.sessionID, s.config.EnableVAD, s.config.VADThreshold, s.config.VADConsecutiveFrames))
 	s.asrPipeline = pipeline
+
+	// 设置 PCM 音频记录回调
+	pipeline.SetPCMAudioCallback(func(data []byte) error {
+		s.mu.RLock()
+		recorder := s.recorder
+		s.mu.RUnlock()
+		if recorder != nil {
+			return recorder.WriteAudio(data)
+		}
+		return nil
+	})
 	if s.config.EnableVAD {
 		pipeline.SetBargeInCallback(func() {
 			s.logger.Info("[Session] Barge-in 触发：用户说话，打断 TTS 和 LLM")
@@ -210,6 +221,7 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 		if err := s.writer.SendASRResult(incrementalText); err != nil {
 			s.logger.Error("[Session] 发送 ASR 结果失败", zap.Error(err))
 		}
+
 		s.mu.Lock()
 		if s.llmProcessing {
 			s.logger.Info("[Session] LLM 正在处理中，忽略新的 ASR 结果",
@@ -219,11 +231,19 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 		}
 		s.llmProcessing = true
 		s.mu.Unlock()
+
+		// 记录用户输入（在 LLM 开始处理时）
+		s.recordUserInput(incrementalText)
+
 		if err := s.writer.SendTTSStart(); err != nil {
 			s.logger.Error("[Session] 发送 TTS 开始消息失败", zap.Error(err))
 		}
 		go func(text string) {
 			receivedContent := false
+			var llmResponse string // 收集完整的 LLM 回复
+			var llmStartTime, llmEndTime time.Time
+			var ttsStartTime, ttsEndTime time.Time
+
 			defer func() {
 				s.mu.Lock()
 				s.llmProcessing = false
@@ -280,17 +300,21 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 				}
 			}
 
+			llmStartTime = time.Now()
 			err := s.llmService.QueryStream(text, func(segment string, isComplete bool) error {
 				if !isComplete {
 					if !receivedContent {
 						receivedContent = true
+						ttsStartTime = time.Now()
 						if s.asrPipeline != nil {
 							s.asrPipeline.SetTTSPlaying(true)
 							s.logger.Info("[Session] 已设置 TTS 播放状态（LLM 开始返回内容）")
 						}
 					}
+					llmResponse += segment
 					s.ttsPipeline.OnLLMToken(segment)
 				} else {
+					llmEndTime = time.Now()
 					s.ttsPipeline.OnLLMComplete()
 				}
 				return nil
@@ -299,6 +323,13 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 				Model:     "qwen-flash",
 				Stream:    true,
 			})
+
+			// 记录 AI 回复
+			if err == nil && receivedContent {
+				ttsEndTime = time.Now()
+				s.recordAIResponse(llmResponse, llmStartTime, llmEndTime, ttsStartTime, ttsEndTime)
+			}
+
 			if err != nil {
 				s.logger.Error("[Session] LLM 查询失败", zap.Error(err))
 				if !receivedContent {
@@ -350,6 +381,7 @@ func (s *HardwareSession) handleAudio(data []byte) error {
 	if pipeline == nil {
 		return fmt.Errorf("[Session] ASR Pipeline 未初始化")
 	}
+
 	if voiceprintTool != nil {
 		voiceprintTool.AddAudioFrame(data)
 	}

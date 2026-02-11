@@ -267,6 +267,12 @@ func (h *Handlers) registerSystemRoutes(r *gin.RouterGroup) {
 
 		// Audio file upload route
 		system.POST("/upload/audio", h.UploadAudio)
+
+		// Search configuration routes
+		system.GET("/search/status", h.GetSearchStatus)
+		system.PUT("/search/config", models.AuthRequired, h.UpdateSearchConfig)
+		system.POST("/search/enable", models.AuthRequired, h.EnableSearch)
+		system.POST("/search/disable", models.AuthRequired, h.DisableSearch)
 	}
 
 	// Voiceprint management routes (separate from system group)
@@ -279,15 +285,6 @@ func (h *Handlers) registerSystemRoutes(r *gin.RouterGroup) {
 		voiceprint.POST("/verify", models.AuthRequired, h.VerifyVoiceprint)     // 声纹验证
 		voiceprint.PUT("/:id", models.AuthRequired, h.UpdateVoiceprint)         // 更新声纹记录
 		voiceprint.DELETE("/:id", models.AuthRequired, h.DeleteVoiceprint)      // 删除声纹记录
-	}
-
-	system2 := r.Group("system")
-	{
-		// Search configuration routes
-		system2.GET("/search/status", h.GetSearchStatus)
-		system2.PUT("/search/config", models.AuthRequired, h.UpdateSearchConfig)
-		system2.POST("/search/enable", models.AuthRequired, h.EnableSearch)
-		system2.POST("/search/disable", models.AuthRequired, h.DisableSearch)
 	}
 }
 

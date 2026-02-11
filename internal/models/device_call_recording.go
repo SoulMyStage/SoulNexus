@@ -70,7 +70,6 @@ type CallRecording struct {
 	DeviceID                string     `json:"deviceId" gorm:"size:64;index"`                         // 设备ID (MAC地址)
 	MacAddress              string     `json:"macAddress" gorm:"size:64;index"`                       // MAC地址
 	SessionID               string     `json:"sessionId" gorm:"size:128;index"`                       // 会话ID
-	AudioPath               string     `json:"audioPath" gorm:"size:512;not null"`                    // 音频文件路径
 	StorageURL              string     `json:"storageUrl" gorm:"size:1024"`                           // 存储音频的URL
 	AudioFormat             string     `json:"audioFormat" gorm:"size:16"`                            // 音频格式 (wav, mp3, opus)
 	AudioSize               int64      `json:"audioSize" gorm:"default:0"`                            // 文件大小(字节)
@@ -81,8 +80,6 @@ type CallRecording struct {
 	CallStatus              string     `json:"callStatus" gorm:"size:32;index"`                       // 通话状态 (completed, interrupted, error)
 	StartTime               time.Time  `json:"startTime" gorm:"index"`                                // 开始时间
 	EndTime                 time.Time  `json:"endTime" gorm:"index"`                                  // 结束时间
-	UserInput               string     `json:"userInput" gorm:"type:text"`                            // 用户输入文本
-	AIResponse              string     `json:"aiResponse" gorm:"type:text"`                           // AI回复文本
 	Summary                 string     `json:"summary" gorm:"type:text"`                              // 对话摘要
 	Keywords                string     `json:"keywords" gorm:"type:text"`                             // 关键词JSON数组（存储为文本）
 	AudioQuality            float64    `json:"audioQuality"`                                          // 音频质量评分 (0-1)
@@ -99,11 +96,10 @@ type CallRecording struct {
 	AnalysisVersion         int        `json:"analysisVersion" gorm:"default:1"`                      // 分析版本号
 	ConversationDetailsJSON string     `json:"-" gorm:"type:longtext;column:conversation_details"`    // 对话详情JSON数据
 	TimingMetricsJSON       string     `json:"-" gorm:"type:longtext;column:timing_metrics"`          // 时间指标JSON数据
-	// 新增字段
-	Speakers    string `json:"speakers" gorm:"type:text"`  // 使用的发音人ID列表，格式: "101040;101019;101004"
-	LLMModel    string `json:"llmModel" gorm:"size:128"`   // 使用的LLM模型
-	TTSProvider string `json:"ttsProvider" gorm:"size:64"` // TTS提供商
-	ASRProvider string `json:"asrProvider" gorm:"size:64"` // ASR提供商
+	Speakers                string     `json:"speakers" gorm:"type:text"`                             // 使用的发音人ID列表，格式: "101040;101019;101004"
+	LLMModel                string     `json:"llmModel" gorm:"size:128"`                              // 使用的LLM模型
+	TTSProvider             string     `json:"ttsProvider" gorm:"size:64"`                            // TTS提供商
+	ASRProvider             string     `json:"asrProvider" gorm:"size:64"`                            // ASR提供商
 }
 
 func (CallRecording) TableName() string {
