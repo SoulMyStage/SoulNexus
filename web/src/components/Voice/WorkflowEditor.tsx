@@ -41,7 +41,7 @@ const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 // 节点类型定义（根据后端定义）
 export interface WorkflowNode {
   id: string
-  type: 'start' | 'end' | 'task' | 'gateway' | 'event' | 'subflow' | 'parallel' | 'wait' | 'timer' | 'script' | 'plugin' | 'workflow_plugin'
+  type: 'start' | 'end' | 'task' | 'gateway' | 'event' | 'subflow' | 'parallel' | 'wait' | 'timer' | 'script' | 'workflow_plugin'
   position: { x: number; y: number }
   data: {
     label: string
@@ -167,15 +167,6 @@ const getNodeTypes = (t: (key: string) => string) => ({
     inputs: 1,
     outputs: 1
   },
-  plugin: {
-    label: t('workflow.nodes.plugin'),
-    icon: <Package className="w-5 h-5" />,
-    color: '#7c2d12', // 棕色
-    gradient: 'from-orange-400 to-orange-600',
-    shadowColor: 'shadow-orange-200',
-    inputs: 1,
-    outputs: 1
-  },
   workflow_plugin: {
     label: t('workflow.nodes.workflowPlugin'),
     icon: <Package className="w-5 h-5" />,
@@ -248,7 +239,6 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
   const [showRunParamsModal, setShowRunParamsModal] = useState(false)
   const [runParameters, setRunParameters] = useState<Record<string, string>>({})
   const [availableEventTypes, setAvailableEventTypes] = useState<string[]>([])
-  const [loadingEventTypes, setLoadingEventTypes] = useState(false)
   const [showGatewayHelp, setShowGatewayHelp] = useState(false)
   const [showNodeTestModal, setShowNodeTestModal] = useState(false)
   const [testingNode, setTestingNode] = useState<string | null>(null)
@@ -366,11 +356,6 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
 	
 	return result, nil
 }`
-        }
-      case 'plugin':
-        return {
-          pluginId: null,
-          parameters: {}
         }
       case 'workflow_plugin':
         return {
@@ -1368,157 +1353,6 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                   </div>
                 )}
                 
-                {node.type === 'plugin' && (
-                  <div className="space-y-4">
-                    {/* 插件信息显示 */}
-                    {(() => {
-                      const plugin = installedPlugins.find(p => p.pluginId === node.data.pluginId)
-                      if (!plugin) {
-                        return (
-                          <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                            <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
-                              <AlertCircle className="w-4 h-4" />
-                              <span className="text-sm font-medium">插件未找到</span>
-                            </div>
-                            <p className="text-xs text-red-600 dark:text-red-500 mt-1">
-                              该节点关联的插件可能已被卸载或不存在
-                            </p>
-                          </div>
-                        )
-                      }
-                      
-                      return (
-                        <div className="space-y-4">
-                          {/* 插件基本信息 */}
-                          <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                            <div className="flex items-center gap-3 mb-2">
-                              <div 
-                                className="p-2 rounded-lg"
-                                style={{ 
-                                  backgroundColor: plugin.plugin?.color || '#7c2d12',
-                                  color: 'white'
-                                }}
-                              >
-                                <Package className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                                  {plugin.plugin?.displayName || plugin.plugin?.name}
-                                </h4>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">
-                                  v{plugin.version} • {plugin.plugin?.category}
-                                </p>
-                              </div>
-                            </div>
-                            {plugin.plugin?.description && (
-                              <p className="text-xs text-gray-600 dark:text-gray-400">
-                                {plugin.plugin.description}
-                              </p>
-                            )}
-                          </div>
-                          
-                          {/* 输入参数配置 */}
-                          {plugin.plugin?.inputSchema?.parameters?.length > 0 && (
-                            <div>
-                              <h5 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                                输入参数配置
-                              </h5>
-                              <div className="space-y-3">
-                                {plugin.plugin.inputSchema.parameters.map((param: any, index: number) => (
-                                  <div key={index} className="space-y-2">
-                                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                                      {param.name}
-                                      {param.required && <span className="text-red-500 ml-1">*</span>}
-                                    </label>
-                                    {param.type === 'boolean' ? (
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="checkbox"
-                                          checked={node.data.config?.parameters?.[param.name] || false}
-                                          onChange={(e) => updateNodeConfig(node.id, {
-                                            ...(node.data.config || {}),
-                                            parameters: {
-                                              ...(node.data.config?.parameters || {}),
-                                              [param.name]: e.target.checked
-                                            }
-                                          })}
-                                          className="rounded border-gray-300 dark:border-gray-600"
-                                        />
-                                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                                          {param.description}
-                                        </span>
-                                      </div>
-                                    ) : param.type === 'number' ? (
-                                      <input
-                                        type="number"
-                                        value={node.data.config?.parameters?.[param.name] || param.default || ''}
-                                        onChange={(e) => updateNodeConfig(node.id, {
-                                          ...(node.data.config || {}),
-                                          parameters: {
-                                            ...(node.data.config?.parameters || {}),
-                                            [param.name]: parseFloat(e.target.value) || 0
-                                          }
-                                        })}
-                                        placeholder={param.example || param.default}
-                                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                      />
-                                    ) : (
-                                      <input
-                                        type="text"
-                                        value={node.data.config?.parameters?.[param.name] || param.default || ''}
-                                        onChange={(e) => updateNodeConfig(node.id, {
-                                          ...(node.data.config || {}),
-                                          parameters: {
-                                            ...(node.data.config?.parameters || {}),
-                                            [param.name]: e.target.value
-                                          }
-                                        })}
-                                        placeholder={param.example || param.default}
-                                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                      />
-                                    )}
-                                    {param.description && (
-                                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                                        {param.description}
-                                      </p>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* 输出参数说明 */}
-                          {plugin.plugin?.outputSchema?.parameters?.length > 0 && (
-                            <div>
-                              <h5 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                                输出参数说明
-                              </h5>
-                              <div className="space-y-2">
-                                {plugin.plugin.outputSchema.parameters.map((param: any, index: number) => (
-                                  <div key={index} className="flex items-center gap-2 text-xs">
-                                    <span className="font-medium text-gray-600 dark:text-gray-400">
-                                      {param.name}
-                                    </span>
-                                    <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded">
-                                      {param.type}
-                                    </span>
-                                    {param.description && (
-                                      <span className="text-gray-500 dark:text-gray-500">
-                                        {param.description}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })()}
-                  </div>
-                )}
-                
                 {node.type === 'workflow_plugin' && (
                   <div className="space-y-4">
                     {/* 工作流插件信息显示 */}
@@ -2394,7 +2228,6 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
   // 加载可用的事件类型
   useEffect(() => {
     const loadEventTypes = async () => {
-      setLoadingEventTypes(true)
       try {
         const response = await workflowService.getAvailableEventTypes()
         if (response.code === 200 && response.data) {
@@ -2403,8 +2236,6 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
         }
       } catch (error) {
         console.error('Failed to load event types:', error)
-      } finally {
-        setLoadingEventTypes(false)
       }
     }
     loadEventTypes()
@@ -3529,8 +3360,10 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                   {Object.entries(NODE_TYPES)
                     .filter(([type, config]) => 
-                      config.label.toLowerCase().includes(nodeSearchQuery.toLowerCase()) ||
-                      type.toLowerCase().includes(nodeSearchQuery.toLowerCase())
+                      type !== 'workflow_plugin' && (
+                        config.label.toLowerCase().includes(nodeSearchQuery.toLowerCase()) ||
+                        type.toLowerCase().includes(nodeSearchQuery.toLowerCase())
+                      )
                     )
                     .map(([type, config]) => (
                       <motion.div
@@ -3711,8 +3544,10 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                 
                 {/* 空状态 */}
                 {Object.entries(NODE_TYPES).filter(([type, config]) => 
-                  config.label.toLowerCase().includes(nodeSearchQuery.toLowerCase()) ||
-                  type.toLowerCase().includes(nodeSearchQuery.toLowerCase())
+                  type !== 'workflow_plugin' && (
+                    config.label.toLowerCase().includes(nodeSearchQuery.toLowerCase()) ||
+                    type.toLowerCase().includes(nodeSearchQuery.toLowerCase())
+                  )
                 ).length === 0 && (
                   <motion.div 
                     initial={{ opacity: 0, y: 20 }}
@@ -3807,6 +3642,8 @@ const PublishWorkflowPluginModal: React.FC<{
   const [workflow, setWorkflow] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState(1) // 添加步骤状态
+  const [inputParameters, setInputParameters] = useState<any[]>([])
+  const [outputParameters, setOutputParameters] = useState<any[]>([])
   const [formData, setFormData] = useState({
     name: '',
     displayName: '',
@@ -3839,8 +3676,17 @@ const PublishWorkflowPluginModal: React.FC<{
             ...prev,
             name: workflowData.slug || workflowData.name.toLowerCase().replace(/\s+/g, '-'),
             displayName: workflowData.name,
-            description: workflowData.description || ''
+            description: workflowData.description || '',
+            inputSchema: {
+              parameters: workflowData.inputParameters || []
+            },
+            outputSchema: {
+              parameters: workflowData.outputParameters || []
+            }
           }))
+          // 初始化参数状态
+          setInputParameters(workflowData.inputParameters || [])
+          setOutputParameters(workflowData.outputParameters || [])
         }
       } catch (error) {
         console.error('加载工作流失败:', error)
@@ -3858,14 +3704,22 @@ const PublishWorkflowPluginModal: React.FC<{
     try {
       const pluginData = {
         ...formData,
-        tags: formData.tags.split(',').map((tag: string) => tag.trim()).filter(Boolean)
+        tags: formData.tags.split(',').map((tag: string) => tag.trim()).filter(Boolean),
+        inputSchema: {
+          parameters: inputParameters
+        },
+        outputSchema: {
+          parameters: outputParameters
+        }
       }
+
+      console.log('发送的插件数据:', pluginData)
 
       const response = await workflowPluginService.publishWorkflowAsPlugin(workflowId, pluginData)
       if (response.data) {
         // 使用 Toast 显示成功提示
         showAlert('您的工作流插件已成功发布到插件市场', 'success', '插件发布成功！')
-        setStep(3) // 显示成功页面
+        setStep(4) // 显示成功页面
         setTimeout(() => {
           onClose()
         }, 2000)
@@ -3890,7 +3744,7 @@ const PublishWorkflowPluginModal: React.FC<{
   }
 
   // 成功页面
-  if (step === 3) {
+  if (step === 4) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <div className="w-16 h-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center mb-4">
@@ -3926,6 +3780,12 @@ const PublishWorkflowPluginModal: React.FC<{
             step >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
           }`}>
             2
+          </div>
+          <div className={`h-1 w-16 ${step >= 3 ? 'bg-blue-600' : 'bg-gray-200'}`}></div>
+          <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
+            step >= 3 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+          }`}>
+            3
           </div>
         </div>
       </div>
@@ -4136,6 +3996,207 @@ const PublishWorkflowPluginModal: React.FC<{
             <Button
               variant="outline"
               onClick={() => setStep(1)}
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              上一步
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => setStep(3)}
+            >
+              下一步
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-6">
+          <div>
+            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">参数定义</h4>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
+              定义工作流的输入和输出参数，这些参数将在插件被使用时显示给用户。
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 输入参数 */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h5 className="font-medium text-gray-900 dark:text-white">输入参数</h5>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setInputParameters([
+                      ...inputParameters,
+                      { name: '', type: 'string', required: false, description: '' }
+                    ])
+                  }}
+                >
+                  + 添加
+                </Button>
+              </div>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {inputParameters.map((param, index) => (
+                  <div key={index} className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg">
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <Input
+                        size="sm"
+                        placeholder="参数名"
+                        value={param.name}
+                        onChange={(e) => {
+                          const newParams = [...inputParameters]
+                          newParams[index] = { ...param, name: e.target.value }
+                          setInputParameters(newParams)
+                        }}
+                      />
+                      <select
+                        value={param.type}
+                        onChange={(e) => {
+                          const newParams = [...inputParameters]
+                          newParams[index] = { ...param, type: e.target.value }
+                          setInputParameters(newParams)
+                        }}
+                        className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      >
+                        <option value="string">字符串</option>
+                        <option value="number">数字</option>
+                        <option value="boolean">布尔值</option>
+                        <option value="object">对象</option>
+                        <option value="array">数组</option>
+                      </select>
+                    </div>
+                    <Input
+                      size="sm"
+                      placeholder="描述"
+                      value={param.description}
+                      onChange={(e) => {
+                        const newParams = [...inputParameters]
+                        newParams[index] = { ...param, description: e.target.value }
+                        setInputParameters(newParams)
+                      }}
+                    />
+                    <div className="flex items-center justify-between mt-2">
+                      <label className="flex items-center text-xs gap-2">
+                        <input
+                          type="checkbox"
+                          checked={param.required}
+                          onChange={(e) => {
+                            const newParams = [...inputParameters]
+                            newParams[index] = { ...param, required: e.target.checked }
+                            setInputParameters(newParams)
+                          }}
+                        />
+                        <span>必需</span>
+                      </label>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          setInputParameters(inputParameters.filter((_, i) => i !== index))
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 输出参数 */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h5 className="font-medium text-gray-900 dark:text-white">输出参数</h5>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setOutputParameters([
+                      ...outputParameters,
+                      { name: '', type: 'string', required: false, description: '' }
+                    ])
+                  }}
+                >
+                  + 添加
+                </Button>
+              </div>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {outputParameters.map((param, index) => (
+                  <div key={index} className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg">
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <Input
+                        size="sm"
+                        placeholder="参数名"
+                        value={param.name}
+                        onChange={(e) => {
+                          const newParams = [...outputParameters]
+                          newParams[index] = { ...param, name: e.target.value }
+                          setOutputParameters(newParams)
+                        }}
+                      />
+                      <select
+                        value={param.type}
+                        onChange={(e) => {
+                          const newParams = [...outputParameters]
+                          newParams[index] = { ...param, type: e.target.value }
+                          setOutputParameters(newParams)
+                        }}
+                        className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      >
+                        <option value="string">字符串</option>
+                        <option value="number">数字</option>
+                        <option value="boolean">布尔值</option>
+                        <option value="object">对象</option>
+                        <option value="array">数组</option>
+                      </select>
+                    </div>
+                    <Input
+                      size="sm"
+                      placeholder="描述"
+                      value={param.description}
+                      onChange={(e) => {
+                        const newParams = [...outputParameters]
+                        newParams[index] = { ...param, description: e.target.value }
+                        setOutputParameters(newParams)
+                      }}
+                    />
+                    <div className="flex items-center justify-between mt-2">
+                      <label className="flex items-center text-xs gap-2">
+                        <input
+                          type="checkbox"
+                          checked={param.required}
+                          onChange={(e) => {
+                            const newParams = [...outputParameters]
+                            newParams[index] = { ...param, required: e.target.checked }
+                            setOutputParameters(newParams)
+                          }}
+                        />
+                        <span>必需</span>
+                      </label>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          setOutputParameters(outputParameters.filter((_, i) => i !== index))
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
+            <Button
+              variant="outline"
+              onClick={() => setStep(2)}
             >
               <ChevronLeft className="w-4 h-4 mr-1" />
               上一步

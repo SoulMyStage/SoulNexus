@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/code-100-precent/LingEcho/internal/models"
@@ -26,8 +27,6 @@ func (w *WorkflowPluginNode) Run(ctx *WorkflowContext) ([]string, error) {
 			return nil, fmt.Errorf("加载工作流插件失败: %v", err)
 		}
 	}
-
-	ctx.AddLog("info", fmt.Sprintf("开始执行工作流插件节点: %s", w.Plugin.DisplayName), w.ID, w.Name)
 
 	// 准备输入数据
 	inputs := make(map[string]interface{})
@@ -55,6 +54,12 @@ func (w *WorkflowPluginNode) Run(ctx *WorkflowContext) ([]string, error) {
 		}
 	}
 
+	// 记录输入参数
+	if len(inputs) > 0 {
+		inputJSON, _ := json.Marshal(inputs)
+		ctx.AddLog("info", fmt.Sprintf("Input: %s", string(inputJSON)), w.ID, w.Name)
+	}
+
 	// 执行工作流插件（实际上是执行插件对应的工作流）
 	result, err := w.executeWorkflowPlugin(ctx, inputs)
 	if err != nil {
@@ -69,6 +74,12 @@ func (w *WorkflowPluginNode) Run(ctx *WorkflowContext) ([]string, error) {
 				ctx.SetData(fmt.Sprintf("%s.%s", w.ID, param.Name), value)
 			}
 		}
+	}
+
+	// 记录输出参数
+	if len(result) > 0 {
+		outputJSON, _ := json.Marshal(result)
+		ctx.AddLog("info", fmt.Sprintf("Output: %s", string(outputJSON)), w.ID, w.Name)
 	}
 
 	ctx.AddLog("success", "工作流插件执行完成", w.ID, w.Name)
@@ -96,7 +107,6 @@ func (w *WorkflowPluginNode) executeWorkflowPlugin(ctx *WorkflowContext, inputs 
 	workflowGraph := w.Plugin.WorkflowSnapshot
 
 	ctx.AddLog("info", fmt.Sprintf("执行工作流插件: %s", w.Plugin.DisplayName), w.ID, w.Name)
-	ctx.AddLog("debug", fmt.Sprintf("工作流插件包含 %d 个节点", len(workflowGraph.Nodes)), w.ID, w.Name)
 
 	// 创建子工作流定义
 	subWorkflowDef := &models.WorkflowDefinition{
@@ -192,12 +202,13 @@ func (s *SubWorkflowLogForwarder) SendLog(log ExecutionLog) error {
 	}
 
 	// 修改日志，添加子工作流前缀，但保持原始的节点信息
+	// 只在必要时添加前缀，避免过度嵌套
 	modifiedLog := ExecutionLog{
 		Timestamp: log.Timestamp,
 		Level:     log.Level,
-		Message:   fmt.Sprintf("[子工作流:%s] %s", s.parentNodeName, log.Message),
-		NodeID:    log.NodeID,                                                 // 保持原始节点ID
-		NodeName:  fmt.Sprintf("[子工作流:%s]%s", s.parentNodeName, log.NodeName), // 添加子工作流前缀
+		Message:   log.Message, // 不添加重复的前缀
+		NodeID:    log.NodeID,
+		NodeName:  fmt.Sprintf("[%s] %s", s.parentNodeName, log.NodeName), // 简化格式
 	}
 
 	return s.parentSender.SendLog(modifiedLog)
@@ -364,6 +375,16 @@ func (w *WorkflowPluginNode) instantiateNode(base Node) (ExecutableNode, error) 
 			}
 		}
 		return gatewayNode, nil
+	case NodeTypeAIChat:
+		aiChatNode := &AIChatNode{Node: &base}
+		if base.Properties != nil {
+			config, err := ParseAIChatConfig(base.Properties)
+			if err != nil {
+				return nil, fmt.Errorf("parse AI chat config failed: %w", err)
+			}
+			aiChatNode.Config = config
+		}
+		return aiChatNode, nil
 	default:
 		// 对于其他类型的节点，创建一个基础的任务节点
 		return &TaskNode{Node: base}, nil

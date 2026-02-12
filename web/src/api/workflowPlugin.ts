@@ -175,5 +175,10 @@ export const workflowPluginService = {
   // 获取用户创建的工作流插件
   getUserWorkflowPlugins: (): Promise<ApiResponse<WorkflowPlugin[]>> => {
     return get('/workflow-plugins/my-plugins')
+  },
+
+  // 获取工作流已发布的插件信息
+  getWorkflowPublishedPlugin: (workflowId: number): Promise<ApiResponse<WorkflowPlugin | null>> => {
+    return get(`/workflow-plugins/workflow/${workflowId}/published`)
   }
 }

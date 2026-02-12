@@ -713,7 +713,7 @@ func (h *VoiceConversationHandler) sendAudioToClient(audioData []byte) {
 	logrus.WithFields(logrus.Fields{
 		"call_id": h.callID,
 		"bytes":   len(audioData),
-	}).Info("📤 准备发送音频")
+	}).Info("准备发送音频")
 
 	// 获取 TTS 服务的实际采样率
 	ttsFormat := h.ttsService.Format()
@@ -723,7 +723,7 @@ func (h *VoiceConversationHandler) sendAudioToClient(audioData []byte) {
 		"call_id":         h.callID,
 		"tts_sample_rate": ttsSampleRate,
 		"target_rate":     8000,
-	}).Info("🔄 TTS 采样率信息")
+	}).Info("TTS 采样率信息")
 
 	// 1. 重采样到 8kHz（如果需要）
 	var pcm8k []byte

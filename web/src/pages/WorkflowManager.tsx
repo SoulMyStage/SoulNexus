@@ -69,16 +69,21 @@ const WorkflowManager: React.FC = () => {
   const [selectedVersion1, setSelectedVersion1] = useState<number | null>(null)
   const [selectedVersion2, setSelectedVersion2] = useState<number | null>(null)
   const [changeNote, setChangeNote] = useState('')
+  const [showParametersPanel, setShowParametersPanel] = useState(false)
+  const [inputParameters, setInputParameters] = useState<any[]>([])
+  const [outputParameters, setOutputParameters] = useState<any[]>([])
 
   // 加载工作流列表
   useEffect(() => {
     loadWorkflows()
   }, [selectedStatus, searchTerm])
 
-  // 当选中工作流时，初始化触发器配置
+  // 当选中工作流时，初始化触发器配置和参数
   useEffect(() => {
     if (selectedWorkflow) {
       setTriggerConfig(selectedWorkflow.triggers || {})
+      setInputParameters(selectedWorkflow.inputParameters || [])
+      setOutputParameters(selectedWorkflow.outputParameters || [])
     }
   }, [selectedWorkflow])
 
@@ -645,7 +650,9 @@ const WorkflowManager: React.FC = () => {
                     definition: updatedDefinition,
                     triggers: triggerConfig,
                     version: selectedWorkflow.version, // 必须提供当前版本号
-                    changeNote: changeNote || ''
+                    changeNote: changeNote || '',
+                    inputParameters: inputParameters,
+                    outputParameters: outputParameters
                   }
                   setChangeNote('') // 清空变更说明
                   
@@ -892,73 +899,270 @@ const WorkflowManager: React.FC = () => {
                       <X className="w-4 h-4" />
                     </Button>
             </div>
+            {/* 选项卡 */}
+            <div className="flex gap-2 mt-3">
+              <Button
+                variant={!showParametersPanel ? "primary" : "outline"}
+                size="xs"
+                onClick={() => setShowParametersPanel(false)}
+              >
+                基本信息
+              </Button>
+              <Button
+                variant={showParametersPanel ? "primary" : "outline"}
+                size="xs"
+                onClick={() => setShowParametersPanel(true)}
+              >
+                参数定义
+              </Button>
+            </div>
           </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {/* 变更说明输入框 */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      变更说明（可选）
-                    </label>
-                    <textarea
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-                      rows={3}
-                      placeholder="描述本次更新的内容..."
-                      value={changeNote}
-                      onChange={(e) => setChangeNote(e.target.value)}
-                    />
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      保存工作流时会自动创建版本历史记录
-                    </p>
-                  </div>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        工作流名称
-                      </label>
-                      <Input
-                        size="sm"
-                        value={selectedWorkflow.name}
-                        readOnly
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        描述
-                      </label>
-                      <textarea
-                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                        rows={3}
-                        value={selectedWorkflow.description}
-                        readOnly
-                      />
-                        </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        标签
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedWorkflow.tags?.map((tag, idx) => (
-                          <Badge key={idx} variant="outline" size="xs">{tag}</Badge>
-                        ))}
+                  {!showParametersPanel ? (
+                    <>
+                      {/* 基本信息选项卡 */}
+                      {/* 变更说明输入框 */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          变更说明（可选）
+                        </label>
+                        <textarea
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                          rows={3}
+                          placeholder="描述本次更新的内容..."
+                          value={changeNote}
+                          onChange={(e) => setChangeNote(e.target.value)}
+                        />
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          保存工作流时会自动创建版本历史记录
+                        </p>
                       </div>
-                  </div>
-                    <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                      <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                        <div className="flex justify-between">
-                          <span>创建时间</span>
-                          <span>{formatDate(selectedWorkflow.createdAt)}</span>
-              </div>
-                        <div className="flex justify-between">
-                          <span>更新时间</span>
-                          <span>{formatDate(selectedWorkflow.updatedAt)}</span>
-        </div>
-                        <div className="flex justify-between">
-                          <span>创建者</span>
-                          <span>{selectedWorkflow.createdBy}</span>
-            </div>
-                    </div>
-                  </div>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            工作流名称
+                          </label>
+                          <Input
+                            size="sm"
+                            value={selectedWorkflow.name}
+                            readOnly
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            描述
+                          </label>
+                          <textarea
+                            className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                            rows={3}
+                            value={selectedWorkflow.description}
+                            readOnly
+                          />
+                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            标签
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedWorkflow.tags?.map((tag, idx) => (
+                              <Badge key={idx} variant="outline" size="xs">{tag}</Badge>
+                            ))}
+                          </div>
+                      </div>
+                        <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                          <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                            <div className="flex justify-between">
+                              <span>创建时间</span>
+                              <span>{formatDate(selectedWorkflow.createdAt)}</span>
                 </div>
+                            <div className="flex justify-between">
+                              <span>更新时间</span>
+                              <span>{formatDate(selectedWorkflow.updatedAt)}</span>
+            </div>
+                            <div className="flex justify-between">
+                              <span>创建者</span>
+                              <span>{selectedWorkflow.createdBy}</span>
+                </div>
+                        </div>
+                      </div>
+                    </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* 参数定义选项卡 */}
+                      <div className="space-y-4">
+                        {/* 输入参数 */}
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-medium text-gray-900 dark:text-white">输入参数</h3>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => {
+                                setInputParameters([
+                                  ...inputParameters,
+                                  { name: '', type: 'string', required: false, description: '' }
+                                ])
+                              }}
+                            >
+                              添加
+                            </Button>
+                          </div>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {inputParameters.map((param, index) => (
+                              <div key={index} className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                  <Input
+                                    size="sm"
+                                    placeholder="参数名"
+                                    value={param.name}
+                                    onChange={(e) => {
+                                      const newParams = [...inputParameters]
+                                      newParams[index] = { ...param, name: e.target.value }
+                                      setInputParameters(newParams)
+                                    }}
+                                  />
+                                  <select
+                                    value={param.type}
+                                    onChange={(e) => {
+                                      const newParams = [...inputParameters]
+                                      newParams[index] = { ...param, type: e.target.value }
+                                      setInputParameters(newParams)
+                                    }}
+                                    className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                  >
+                                    <option value="string">字符串</option>
+                                    <option value="number">数字</option>
+                                    <option value="boolean">布尔值</option>
+                                    <option value="object">对象</option>
+                                    <option value="array">数组</option>
+                                  </select>
+                                </div>
+                                <Input
+                                  size="sm"
+                                  placeholder="描述"
+                                  value={param.description}
+                                  onChange={(e) => {
+                                    const newParams = [...inputParameters]
+                                    newParams[index] = { ...param, description: e.target.value }
+                                    setInputParameters(newParams)
+                                  }}
+                                />
+                                <div className="flex items-center justify-between mt-2">
+                                  <label className="flex items-center text-xs gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={param.required}
+                                      onChange={(e) => {
+                                        const newParams = [...inputParameters]
+                                        newParams[index] = { ...param, required: e.target.checked }
+                                        setInputParameters(newParams)
+                                      }}
+                                    />
+                                    <span>必需</span>
+                                  </label>
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    onClick={() => {
+                                      setInputParameters(inputParameters.filter((_, i) => i !== index))
+                                    }}
+                                  >
+                                    删除
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 输出参数 */}
+                        <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-medium text-gray-900 dark:text-white">输出参数</h3>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => {
+                                setOutputParameters([
+                                  ...outputParameters,
+                                  { name: '', type: 'string', required: false, description: '' }
+                                ])
+                              }}
+                            >
+                              添加
+                            </Button>
+                          </div>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {outputParameters.map((param, index) => (
+                              <div key={index} className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                  <Input
+                                    size="sm"
+                                    placeholder="参数名"
+                                    value={param.name}
+                                    onChange={(e) => {
+                                      const newParams = [...outputParameters]
+                                      newParams[index] = { ...param, name: e.target.value }
+                                      setOutputParameters(newParams)
+                                    }}
+                                  />
+                                  <select
+                                    value={param.type}
+                                    onChange={(e) => {
+                                      const newParams = [...outputParameters]
+                                      newParams[index] = { ...param, type: e.target.value }
+                                      setOutputParameters(newParams)
+                                    }}
+                                    className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                  >
+                                    <option value="string">字符串</option>
+                                    <option value="number">数字</option>
+                                    <option value="boolean">布尔值</option>
+                                    <option value="object">对象</option>
+                                    <option value="array">数组</option>
+                                  </select>
+                                </div>
+                                <Input
+                                  size="sm"
+                                  placeholder="描述"
+                                  value={param.description}
+                                  onChange={(e) => {
+                                    const newParams = [...outputParameters]
+                                    newParams[index] = { ...param, description: e.target.value }
+                                    setOutputParameters(newParams)
+                                  }}
+                                />
+                                <div className="flex items-center justify-between mt-2">
+                                  <label className="flex items-center text-xs gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={param.required}
+                                      onChange={(e) => {
+                                        const newParams = [...outputParameters]
+                                        newParams[index] = { ...param, required: e.target.checked }
+                                        setOutputParameters(newParams)
+                                      }}
+                                    />
+                                    <span>必需</span>
+                                  </label>
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    onClick={() => {
+                                      setOutputParameters(outputParameters.filter((_, i) => i !== index))
+                                    }}
+                                  >
+                                    删除
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </motion.div>
             )}

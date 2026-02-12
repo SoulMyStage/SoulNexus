@@ -16,8 +16,7 @@ func (s *StartNode) Trigger(ctx *WorkflowContext) error {
 	if ctx == nil {
 		return fmt.Errorf("workflow context is nil")
 	}
-	message := fmt.Sprintf("Starting workflow: %s", s.Name)
-	ctx.AddLog("info", message, s.ID, s.Name)
+	// 不添加日志，让节点的 Run 方法处理
 	return nil
 }
 
@@ -76,9 +75,7 @@ func (s *StartNode) Run(ctx *WorkflowContext) ([]string, error) {
 		// Log input parameters with their values
 		inputJSON, err := json.Marshal(inputs)
 		if err == nil {
-			ctx.AddLog("info", fmt.Sprintf("Start node received input parameters: %s", string(inputJSON)), s.ID, s.Name)
-		} else {
-			ctx.AddLog("info", fmt.Sprintf("Start node received %d input parameter(s)", len(inputs)), s.ID, s.Name)
+			ctx.AddLog("info", fmt.Sprintf("Input: %s", string(inputJSON)), s.ID, s.Name)
 		}
 	} else {
 		// No inputs, set default start data

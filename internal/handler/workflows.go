@@ -266,16 +266,18 @@ func (h *Handlers) UpdateWorkflowDefinition(c *gin.Context) {
 	}
 
 	var input struct {
-		Name        *string               `json:"name"`
-		Description *string               `json:"description"`
-		Status      *string               `json:"status"`
-		Definition  *models.WorkflowGraph `json:"definition"`
-		Settings    *models.JSONMap       `json:"settings"`
-		Triggers    *models.JSONMap       `json:"triggers"`
-		Tags        []string              `json:"tags"`
-		Version     uint                  `json:"version" binding:"required"`
-		ChangeNote  string                `json:"changeNote"`        // 版本变更说明
-		GroupID     interface{}           `json:"groupId,omitempty"` // 组织ID，如果设置则表示这是组织共享的工作流
+		Name             *string               `json:"name"`
+		Description      *string               `json:"description"`
+		Status           *string               `json:"status"`
+		Definition       *models.WorkflowGraph `json:"definition"`
+		Settings         *models.JSONMap       `json:"settings"`
+		Triggers         *models.JSONMap       `json:"triggers"`
+		InputParameters  []interface{}         `json:"inputParameters"`
+		OutputParameters []interface{}         `json:"outputParameters"`
+		Tags             []string              `json:"tags"`
+		Version          uint                  `json:"version" binding:"required"`
+		ChangeNote       string                `json:"changeNote"`        // 版本变更说明
+		GroupID          interface{}           `json:"groupId,omitempty"` // 组织ID，如果设置则表示这是组织共享的工作流
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.Fail(c, "invalid payload", err.Error())
@@ -347,19 +349,21 @@ func (h *Handlers) UpdateWorkflowDefinition(c *gin.Context) {
 
 	// Save current version to history before updating
 	versionHistory := models.WorkflowVersion{
-		DefinitionID: def.ID,
-		Version:      def.Version,
-		Name:         def.Name,
-		Slug:         def.Slug,
-		Description:  def.Description,
-		Status:       def.Status,
-		Definition:   def.Definition,
-		Settings:     def.Settings,
-		Triggers:     def.Triggers,
-		Tags:         def.Tags,
-		CreatedBy:    def.CreatedBy,
-		UpdatedBy:    def.UpdatedBy,
-		ChangeNote:   input.ChangeNote,
+		DefinitionID:     def.ID,
+		Version:          def.Version,
+		Name:             def.Name,
+		Slug:             def.Slug,
+		Description:      def.Description,
+		Status:           def.Status,
+		Definition:       def.Definition,
+		Settings:         def.Settings,
+		Triggers:         def.Triggers,
+		InputParameters:  def.InputParameters,
+		OutputParameters: def.OutputParameters,
+		Tags:             def.Tags,
+		CreatedBy:        def.CreatedBy,
+		UpdatedBy:        def.UpdatedBy,
+		ChangeNote:       input.ChangeNote,
 	}
 	if err := h.db.Create(&versionHistory).Error; err != nil {
 		// Log error but don't fail the update (version history is non-critical)
@@ -388,20 +392,28 @@ func (h *Handlers) UpdateWorkflowDefinition(c *gin.Context) {
 	if input.Tags != nil {
 		def.Tags = models.StringArray(input.Tags)
 	}
+	if input.InputParameters != nil {
+		def.InputParameters = models.JSONArray(input.InputParameters)
+	}
+	if input.OutputParameters != nil {
+		def.OutputParameters = models.JSONArray(input.OutputParameters)
+	}
 	def.UpdatedBy = user.Email
 	oldVersion := def.Version
 	def.Version++
 
 	updates := map[string]interface{}{
-		"name":        def.Name,
-		"description": def.Description,
-		"status":      def.Status,
-		"definition":  def.Definition,
-		"settings":    def.Settings,
-		"triggers":    def.Triggers,
-		"tags":        def.Tags,
-		"updated_by":  def.UpdatedBy,
-		"version":     def.Version,
+		"name":              def.Name,
+		"description":       def.Description,
+		"status":            def.Status,
+		"definition":        def.Definition,
+		"settings":          def.Settings,
+		"triggers":          def.Triggers,
+		"tags":              def.Tags,
+		"input_parameters":  def.InputParameters,
+		"output_parameters": def.OutputParameters,
+		"updated_by":        def.UpdatedBy,
+		"version":           def.Version,
 	}
 
 	tx := h.db.Model(&models.WorkflowDefinition{}).

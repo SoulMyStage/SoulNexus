@@ -70,6 +70,31 @@ const NodePluginMarket: React.FC = () => {
   const [pluginToDelete, setPluginToDelete] = useState<WorkflowPlugin | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
+  // 编辑插件状态
+  const [showEditPlugin, setShowEditPlugin] = useState(false)
+  const [editingPlugin, setEditingPlugin] = useState<WorkflowPlugin | null>(null)
+  const [editFormData, setEditFormData] = useState({
+    displayName: '',
+    description: '',
+    category: 'utility' as WorkflowPluginCategory,
+    icon: '',
+    color: '#6366f1',
+    tags: '',
+    author: '',
+    homepage: '',
+    repository: '',
+    license: 'MIT',
+    version: '',
+    changeLog: '',
+    inputSchema: {
+      parameters: [] as any[]
+    },
+    outputSchema: {
+      parameters: [] as any[]
+    }
+  })
+  const [editLoading, setEditLoading] = useState(false)
+
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -194,6 +219,77 @@ const NodePluginMarket: React.FC = () => {
     setDeleteLoading(false)
   }
 
+  // 编辑插件
+  const handleEditPlugin = async (plugin: WorkflowPlugin) => {
+    try {
+      const response = await workflowPluginService.getWorkflowPlugin(plugin.id)
+      if (response.data) {
+        const p = response.data
+        setEditingPlugin(p)
+        setEditFormData({
+          displayName: p.displayName || '',
+          description: p.description || '',
+          category: p.category || 'utility',
+          icon: p.icon || '',
+          color: p.color || '#6366f1',
+          tags: (p.tags || []).join(', '),
+          author: p.author || '',
+          homepage: p.homepage || '',
+          repository: p.repository || '',
+          license: p.license || 'MIT',
+          version: p.version || '1.0.0',
+          changeLog: '',
+          inputSchema: p.inputSchema || { parameters: [] },
+          outputSchema: p.outputSchema || { parameters: [] }
+        })
+        setShowEditPlugin(true)
+      }
+    } catch (error: any) {
+      console.error('获取插件详情失败:', error)
+      showAlert('无法获取插件详情，请稍后重试', 'error', '加载失败')
+    }
+  }
+
+  // 提交编辑
+  const handleSubmitEdit = async () => {
+    if (!editingPlugin) return
+    
+    setEditLoading(true)
+    try {
+      const updateData = {
+        displayName: editFormData.displayName,
+        description: editFormData.description,
+        category: editFormData.category,
+        icon: editFormData.icon,
+        color: editFormData.color,
+        tags: editFormData.tags.split(',').map((tag: string) => tag.trim()).filter(Boolean),
+        author: editFormData.author,
+        homepage: editFormData.homepage,
+        repository: editFormData.repository,
+        license: editFormData.license,
+        version: editFormData.version,
+        changeLog: editFormData.changeLog,
+        inputSchema: editFormData.inputSchema,
+        outputSchema: editFormData.outputSchema
+      }
+
+      const response = await workflowPluginService.updateWorkflowPlugin(editingPlugin.id, updateData)
+      if (response.data) {
+        showAlert('插件已更新成功', 'success', '更新成功')
+        setShowEditPlugin(false)
+        setEditingPlugin(null)
+        loadPlugins()
+      } else {
+        showAlert(response.msg || '更新失败', 'error', '更新失败')
+      }
+    } catch (error: any) {
+      console.error('更新插件失败:', error)
+      showAlert(error.message || '更新插件时发生错误，请稍后重试', 'error', '更新失败')
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
   // 查看插件详情
   const handleViewPlugin = async (plugin: WorkflowPlugin) => {
     try {
@@ -305,16 +401,26 @@ const NodePluginMarket: React.FC = () => {
               查看
             </Button>
             
-            {/* 如果是当前用户的插件，显示删除按钮 */}
+            {/* 如果是当前用户的插件，显示编辑和删除按钮 */}
             {showMyPlugins && user && plugin.userId === user.id ? (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => handleDeletePlugin(plugin)}
-                className="flex-1"
-              >
-                删除
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleEditPlugin(plugin)}
+                  className="flex-1"
+                >
+                  编辑
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => handleDeletePlugin(plugin)}
+                  className="flex-1"
+                >
+                  删除
+                </Button>
+              </>
             ) : (
               <Button
                 variant={isInstalled ? "secondary" : "primary"}
@@ -507,6 +613,25 @@ const NodePluginMarket: React.FC = () => {
         <PublishWorkflowModal onClose={() => setShowCreatePlugin(false)} />
       </Modal>
 
+      {/* 编辑插件模态框 */}
+      <Modal
+        isOpen={showEditPlugin}
+        onClose={() => setShowEditPlugin(false)}
+        title="编辑插件"
+        size="xl"
+      >
+        {editingPlugin && (
+          <EditPluginModal 
+            plugin={editingPlugin}
+            formData={editFormData}
+            setFormData={setEditFormData}
+            onSubmit={handleSubmitEdit}
+            onCancel={() => setShowEditPlugin(false)}
+            loading={editLoading}
+          />
+        )}
+      </Modal>
+
       {/* 删除确认对话框 */}
       <ConfirmDialog
         isOpen={showDeleteConfirm}
@@ -697,171 +822,32 @@ const PluginDetailModal: React.FC<{
   )
 }
 
-// 发布工作流组件
-const PublishWorkflowModal: React.FC<{
-  onClose: () => void
-}> = ({ onClose }) => {
-  const [workflows, setWorkflows] = useState<any[]>([])
-  const [selectedWorkflow, setSelectedWorkflow] = useState<any>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    displayName: '',
-    description: '',
-    category: 'utility' as WorkflowPluginCategory,
-    icon: '',
-    color: '#6366f1',
-    tags: '',
-    author: '',
-    homepage: '',
-    repository: '',
-    license: 'MIT',
-    inputSchema: {
-      parameters: [] as any[]
-    },
-    outputSchema: {
-      parameters: [] as any[]
-    }
-  })
-
-  const [currentStep, setCurrentStep] = useState(1)
-  const [loading, setLoading] = useState(false)
-
-  // 加载用户的工作流列表
-  useEffect(() => {
-    const loadWorkflows = async () => {
-      try {
-        const response = await workflowService.listDefinitions()
-        if (response.data) {
-          setWorkflows(response.data)
-        }
-      } catch (error: any) {
-        console.error('加载工作流失败:', error)
-        showAlert('无法加载工作流列表', 'error', '加载失败')
-      }
-    }
-    
-    loadWorkflows()
-  }, [])
-
-  // 选择工作流时自动填充表单
-  useEffect(() => {
-    if (selectedWorkflow) {
-      setFormData(prev => ({
-        ...prev,
-        name: selectedWorkflow.slug || selectedWorkflow.name,
-        displayName: selectedWorkflow.name,
-        description: selectedWorkflow.description || ''
-      }))
-    }
-  }, [selectedWorkflow])
-
-  // 处理表单提交
-  const handleSubmit = async () => {
-    if (!selectedWorkflow) return
-    
-    setLoading(true)
-    try {
-      const pluginData = {
-        ...formData,
-        tags: formData.tags.split(',').map((tag: string) => tag.trim()).filter(Boolean)
-      }
-
-      const response = await workflowPluginService.publishWorkflowAsPlugin(selectedWorkflow.id, pluginData)
-      if (response.code === 200 && response.data) {
-        showAlert('插件已创建为草稿状态，请在状态过滤器中选择"草稿"查看', 'success', '发布成功')
-        onClose()
-        // 刷新插件列表
-        window.location.reload()
-      } else {
-        showAlert(response.msg || '未知错误', 'error', '发布失败')
-      }
-    } catch (error: any) {
-      console.error('发布工作流失败:', error)
-      showAlert(error.msg || error.message || '网络错误', 'error', '发布失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // 渲染步骤1：选择工作流
-  const renderStep1 = () => (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold mb-4">选择要发布的工作流</h3>
-      
-      {workflows.length === 0 ? (
-        <div className="text-center py-8">
-          <Workflow className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-500">您还没有创建任何工作流</p>
-          <p className="text-sm text-gray-400 mt-2">请先在工作流管理页面创建工作流</p>
-        </div>
-      ) : (
-        <div className="grid gap-3 max-h-96 overflow-y-auto">
-          {workflows.map((workflow) => (
-            <div
-              key={workflow.id}
-              onClick={() => setSelectedWorkflow(workflow)}
-              className={`p-4 border rounded-lg cursor-pointer transition-all ${
-                selectedWorkflow?.id === workflow.id
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-200 hover:border-gray-300 dark:border-gray-700'
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h4 className="font-medium text-gray-900 dark:text-white">
-                    {workflow.name}
-                  </h4>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                    {workflow.description || '暂无描述'}
-                  </p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className={`px-2 py-1 text-xs rounded-full ${
-                      workflow.status === 'active' 
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                        : workflow.status === 'draft'
-                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-                        : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-                    }`}>
-                      {workflow.status === 'active' ? '已激活' : workflow.status === 'draft' ? '草稿' : '已归档'}
-                    </span>
-                    <p className="text-xs text-gray-400">
-                      创建于 {new Date(workflow.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-                {selectedWorkflow?.id === workflow.id && (
-                  <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-white rounded-full" />
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-
-  // 渲染步骤2：插件信息
-  const renderStep2 = () => (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold mb-4">插件信息</h3>
-      
+// 编辑插件组件
+const EditPluginModal: React.FC<{
+  plugin: WorkflowPlugin
+  formData: any
+  setFormData: (data: any) => void
+  onSubmit: () => void
+  onCancel: () => void
+  loading: boolean
+}> = ({ plugin, formData, setFormData, onSubmit, onCancel, loading }) => {
+  return (
+    <div className="space-y-4 max-h-[70vh] overflow-y-auto">
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-2">插件名称 *</label>
-          <Input
-            value={formData.name}
-            onChange={(e) => setFormData({...formData, name: e.target.value})}
-            placeholder="my-awesome-workflow"
-          />
-        </div>
         <div>
           <label className="block text-sm font-medium mb-2">显示名称 *</label>
           <Input
             value={formData.displayName}
             onChange={(e) => setFormData({...formData, displayName: e.target.value})}
-            placeholder="我的超棒工作流"
+            placeholder="插件显示名称"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">版本</label>
+          <Input
+            value={formData.version}
+            onChange={(e) => setFormData({...formData, version: e.target.value})}
+            placeholder="1.0.0"
           />
         </div>
       </div>
@@ -871,7 +857,7 @@ const PublishWorkflowModal: React.FC<{
         <textarea
           value={formData.description}
           onChange={(e) => setFormData({...formData, description: e.target.value})}
-          placeholder="工作流功能描述..."
+          placeholder="插件功能描述..."
           className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none h-20"
         />
       </div>
@@ -940,6 +926,678 @@ const PublishWorkflowModal: React.FC<{
           />
         </div>
       </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-2">更新日志</label>
+        <textarea
+          value={formData.changeLog}
+          onChange={(e) => setFormData({...formData, changeLog: e.target.value})}
+          placeholder="本次更新的内容..."
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none h-16"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-6">
+        {/* 输入参数 */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-medium">输入参数</h4>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const currentParams = formData.inputSchema?.parameters || []
+                setFormData({
+                  ...formData,
+                  inputSchema: {
+                    parameters: [
+                      ...currentParams,
+                      { name: '', type: 'string', required: false, description: '' }
+                    ]
+                  }
+                })
+              }}
+            >
+              添加
+            </Button>
+          </div>
+          
+          <div className="space-y-3 max-h-48 overflow-y-auto">
+            {(formData.inputSchema?.parameters || []).map((param: any, index: number) => (
+              <div key={index} className="p-3 border border-gray-200 rounded-lg">
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <Input
+                    placeholder="参数名"
+                    value={param.name}
+                    onChange={(e) => {
+                      const newParams = [...formData.inputSchema.parameters]
+                      newParams[index] = { ...param, name: e.target.value }
+                      setFormData({
+                        ...formData,
+                        inputSchema: { parameters: newParams }
+                      })
+                    }}
+                  />
+                  <select
+                    value={param.type}
+                    onChange={(e) => {
+                      const newParams = [...formData.inputSchema.parameters]
+                      newParams[index] = { ...param, type: e.target.value }
+                      setFormData({
+                        ...formData,
+                        inputSchema: { parameters: newParams }
+                      })
+                    }}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  >
+                    <option value="string">字符串</option>
+                    <option value="number">数字</option>
+                    <option value="boolean">布尔值</option>
+                    <option value="object">对象</option>
+                    <option value="array">数组</option>
+                  </select>
+                </div>
+                <Input
+                  placeholder="描述"
+                  value={param.description}
+                  onChange={(e) => {
+                    const newParams = [...formData.inputSchema.parameters]
+                    newParams[index] = { ...param, description: e.target.value }
+                    setFormData({
+                      ...formData,
+                      inputSchema: { parameters: newParams }
+                    })
+                  }}
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <label className="flex items-center text-sm gap-2">
+                    <input
+                      type="checkbox"
+                      checked={param.required}
+                      onChange={(e) => {
+                        const newParams = [...formData.inputSchema.parameters]
+                        newParams[index] = { ...param, required: e.target.checked }
+                        setFormData({
+                          ...formData,
+                          inputSchema: { parameters: newParams }
+                        })
+                      }}
+                    />
+                    <span>必需</span>
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newParams = formData.inputSchema.parameters.filter((_: any, i: number) => i !== index)
+                      setFormData({
+                        ...formData,
+                        inputSchema: { parameters: newParams }
+                      })
+                    }}
+                  >
+                    删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 输出参数 */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-medium">输出参数</h4>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const currentParams = formData.outputSchema?.parameters || []
+                setFormData({
+                  ...formData,
+                  outputSchema: {
+                    parameters: [
+                      ...currentParams,
+                      { name: '', type: 'string', required: false, description: '' }
+                    ]
+                  }
+                })
+              }}
+            >
+              添加
+            </Button>
+          </div>
+          
+          <div className="space-y-3 max-h-48 overflow-y-auto">
+            {(formData.outputSchema?.parameters || []).map((param: any, index: number) => (
+              <div key={index} className="p-3 border border-gray-200 rounded-lg">
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <Input
+                    placeholder="参数名"
+                    value={param.name}
+                    onChange={(e) => {
+                      const newParams = [...formData.outputSchema.parameters]
+                      newParams[index] = { ...param, name: e.target.value }
+                      setFormData({
+                        ...formData,
+                        outputSchema: { parameters: newParams }
+                      })
+                    }}
+                  />
+                  <select
+                    value={param.type}
+                    onChange={(e) => {
+                      const newParams = [...formData.outputSchema.parameters]
+                      newParams[index] = { ...param, type: e.target.value }
+                      setFormData({
+                        ...formData,
+                        outputSchema: { parameters: newParams }
+                      })
+                    }}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  >
+                    <option value="string">字符串</option>
+                    <option value="number">数字</option>
+                    <option value="boolean">布尔值</option>
+                    <option value="object">对象</option>
+                    <option value="array">数组</option>
+                  </select>
+                </div>
+                <Input
+                  placeholder="描述"
+                  value={param.description}
+                  onChange={(e) => {
+                    const newParams = [...formData.outputSchema.parameters]
+                    newParams[index] = { ...param, description: e.target.value }
+                    setFormData({
+                      ...formData,
+                      outputSchema: { parameters: newParams }
+                    })
+                  }}
+                />
+                <div className="flex justify-end mt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newParams = formData.outputSchema.parameters.filter((_: any, i: number) => i !== index)
+                      setFormData({
+                        ...formData,
+                        outputSchema: { parameters: newParams }
+                      })
+                    }}
+                  >
+                    删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 操作按钮 */}
+      <div className="flex justify-end gap-2 pt-4 border-t">
+        <Button
+          variant="outline"
+          onClick={onCancel}
+          disabled={loading}
+        >
+          取消
+        </Button>
+        <Button
+          variant="primary"
+          onClick={onSubmit}
+          loading={loading}
+          disabled={loading || !formData.displayName || !formData.description}
+        >
+          保存更改
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// 发布工作流组件
+const PublishWorkflowModal: React.FC<{
+  onClose: () => void
+}> = ({ onClose }) => {
+  const [workflows, setWorkflows] = useState<any[]>([])
+  const [selectedWorkflow, setSelectedWorkflow] = useState<any>(null)
+  const [publishedPlugin, setPublishedPlugin] = useState<any>(null)
+  const [isCheckingPublished, setIsCheckingPublished] = useState(false)
+  const [publishMode, setPublishMode] = useState<'new' | 'version'>('new') // 'new' = 新插件, 'version' = 新版本
+  const [formData, setFormData] = useState({
+    name: '',
+    displayName: '',
+    description: '',
+    category: 'utility' as WorkflowPluginCategory,
+    icon: '',
+    color: '#6366f1',
+    tags: '',
+    author: '',
+    homepage: '',
+    repository: '',
+    license: 'MIT',
+    version: '',
+    inputSchema: {
+      parameters: [] as any[]
+    },
+    outputSchema: {
+      parameters: [] as any[]
+    }
+  })
+
+  const [currentStep, setCurrentStep] = useState(1)
+  const [loading, setLoading] = useState(false)
+
+  // 加载用户的工作流列表
+  useEffect(() => {
+    const loadWorkflows = async () => {
+      try {
+        const response = await workflowService.listDefinitions()
+        if (response.data) {
+          setWorkflows(response.data)
+        }
+      } catch (error: any) {
+        console.error('加载工作流失败:', error)
+        showAlert('无法加载工作流列表', 'error', '加载失败')
+      }
+    }
+    
+    loadWorkflows()
+  }, [])
+
+  // 选择工作流时自动填充表单并检查是否已发布
+  useEffect(() => {
+    if (selectedWorkflow) {
+      console.log('Selected workflow:', selectedWorkflow)
+      console.log('Input parameters:', selectedWorkflow.inputParameters)
+      console.log('Output parameters:', selectedWorkflow.outputParameters)
+      
+      setFormData(prev => ({
+        ...prev,
+        name: selectedWorkflow.slug || selectedWorkflow.name,
+        displayName: selectedWorkflow.name,
+        description: selectedWorkflow.description || '',
+        inputSchema: {
+          parameters: selectedWorkflow.inputParameters && selectedWorkflow.inputParameters.length > 0 
+            ? selectedWorkflow.inputParameters 
+            : []
+        },
+        outputSchema: {
+          parameters: selectedWorkflow.outputParameters && selectedWorkflow.outputParameters.length > 0 
+            ? selectedWorkflow.outputParameters 
+            : []
+        }
+      }))
+      
+      // 检查是否已发布过插件
+      checkPublishedPlugin(selectedWorkflow.id)
+    }
+  }, [selectedWorkflow])
+
+  // 检查工作流是否已发布过插件
+  const checkPublishedPlugin = async (workflowId: number) => {
+    setIsCheckingPublished(true)
+    try {
+      const response = await workflowPluginService.getWorkflowPublishedPlugin(workflowId)
+      if (response.code === 200 && response.data) {
+        setPublishedPlugin(response.data)
+        setPublishMode('version')
+        // 自动填充已发布的插件信息，但保留工作流的参数定义
+        setFormData(prev => ({
+          ...prev,
+          name: response.data.name,
+          displayName: response.data.displayName,
+          description: response.data.description || '',
+          category: response.data.category,
+          icon: response.data.icon || '',
+          color: response.data.color || '#6366f1',
+          tags: response.data.tags?.join(', ') || '',
+          author: response.data.author || '',
+          homepage: response.data.homepage || '',
+          repository: response.data.repository || '',
+          license: response.data.license || 'MIT',
+          version: incrementVersion(response.data.version || '1.0.0'),
+          // 保留工作流的参数，不用已发布插件的参数（因为可能是空的）
+          inputSchema: prev.inputSchema,
+          outputSchema: prev.outputSchema
+        }))
+      } else {
+        setPublishedPlugin(null)
+        setPublishMode('new')
+      }
+    } catch (error: any) {
+      console.error('检查已发布插件失败:', error)
+      setPublishedPlugin(null)
+      setPublishMode('new')
+    } finally {
+      setIsCheckingPublished(false)
+    }
+  }
+
+  // 版本号自增
+  const incrementVersion = (version: string): string => {
+    const parts = version.split('.')
+    if (parts.length === 3) {
+      parts[2] = String(parseInt(parts[2]) + 1)
+      return parts.join('.')
+    }
+    return '1.0.1'
+  }
+
+  // 处理表单提交
+  const handleSubmit = async () => {
+    if (!selectedWorkflow) return
+    
+    setLoading(true)
+    try {
+      // 确保使用工作流的参数，而不是表单中的参数
+      const inputParams = (formData.inputSchema?.parameters && formData.inputSchema.parameters.length > 0)
+        ? formData.inputSchema.parameters
+        : (selectedWorkflow.inputParameters || [])
+      
+      const outputParams = (formData.outputSchema?.parameters && formData.outputSchema.parameters.length > 0)
+        ? formData.outputSchema.parameters
+        : (selectedWorkflow.outputParameters || [])
+
+      const pluginData = {
+        ...formData,
+        tags: formData.tags.split(',').map((tag: string) => tag.trim()).filter(Boolean),
+        // 确保 inputSchema 和 outputSchema 有 parameters 字段
+        inputSchema: {
+          parameters: inputParams
+        },
+        outputSchema: {
+          parameters: outputParams
+        }
+      }
+
+      console.log('发送的插件数据:', pluginData)
+      console.log('Input parameters being sent:', inputParams)
+      console.log('Output parameters being sent:', outputParams)
+
+      let response
+      if (publishMode === 'new') {
+        // 发布新插件
+        response = await workflowPluginService.publishWorkflowAsPlugin(selectedWorkflow.id, pluginData)
+        if (response.code === 200 && response.data) {
+          showAlert('插件已创建为草稿状态，请在状态过滤器中选择"草稿"查看', 'success', '发布成功')
+        }
+      } else {
+        // 更新已发布的插件
+        response = await workflowPluginService.updateWorkflowPlugin(publishedPlugin.id, {
+          displayName: formData.displayName,
+          description: formData.description,
+          category: formData.category,
+          icon: formData.icon,
+          color: formData.color,
+          tags: pluginData.tags,
+          inputSchema: pluginData.inputSchema,
+          outputSchema: pluginData.outputSchema,
+          version: formData.version,
+          author: formData.author,
+          homepage: formData.homepage,
+          repository: formData.repository,
+          license: formData.license
+        })
+        if (response.code === 200) {
+          showAlert('插件已更新', 'success', '更新成功')
+        }
+      }
+      
+      if (response.code === 200) {
+        onClose()
+        // 刷新插件列表
+        window.location.reload()
+      } else {
+        showAlert(response.msg || '未知错误', 'error', '操作失败')
+      }
+    } catch (error: any) {
+      console.error('发布/更新工作流插件失败:', error)
+      showAlert(error.msg || error.message || '网络错误', 'error', '操作失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 渲染步骤1：选择工作流
+  const renderStep1 = () => (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold mb-4">选择要发布的工作流</h3>
+      
+      {workflows.length === 0 ? (
+        <div className="text-center py-8">
+          <Workflow className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500">您还没有创建任何工作流</p>
+          <p className="text-sm text-gray-400 mt-2">请先在工作流管理页面创建工作流</p>
+        </div>
+      ) : (
+        <div className="grid gap-3 max-h-96 overflow-y-auto">
+          {workflows.map((workflow) => (
+            <div
+              key={workflow.id}
+              onClick={() => setSelectedWorkflow(workflow)}
+              className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                selectedWorkflow?.id === workflow.id
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-gray-200 hover:border-gray-300 dark:border-gray-700'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h4 className="font-medium text-gray-900 dark:text-white">
+                    {workflow.name}
+                  </h4>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    {workflow.description || '暂无描述'}
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={`px-2 py-1 text-xs rounded-full ${
+                      workflow.status === 'active' 
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                        : workflow.status === 'draft'
+                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                        : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+                    }`}>
+                      {workflow.status === 'active' ? '已激活' : workflow.status === 'draft' ? '草稿' : '已归档'}
+                    </span>
+                    <p className="text-xs text-gray-400">
+                      创建于 {new Date(workflow.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+                {selectedWorkflow?.id === workflow.id && (
+                  <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+                    <div className="w-2 h-2 bg-white rounded-full" />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 已发布插件信息 */}
+      {selectedWorkflow && isCheckingPublished && (
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <p className="text-sm text-blue-700 dark:text-blue-400">检查已发布插件信息中...</p>
+        </div>
+      )}
+
+      {selectedWorkflow && !isCheckingPublished && publishedPlugin && (
+        <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+          <div className="flex items-start justify-between">
+            <div>
+              <h4 className="font-medium text-green-900 dark:text-green-400 mb-2">已发布的插件</h4>
+              <div className="text-sm text-green-800 dark:text-green-300 space-y-1">
+                <p><strong>名称:</strong> {publishedPlugin.displayName}</p>
+                <p><strong>版本:</strong> {publishedPlugin.version || '1.0.0'}</p>
+                <p><strong>状态:</strong> {publishedPlugin.status}</p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-green-700 dark:text-green-400 mb-2">将创建新版本</p>
+              <Badge variant="success" size="sm">版本模式</Badge>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 工作流参数信息 */}
+      {selectedWorkflow && (
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <p className="text-sm text-blue-700 dark:text-blue-400 mb-2">
+            <strong>工作流参数:</strong> 输入参数 {selectedWorkflow.inputParameters?.length || 0} 个，输出参数 {selectedWorkflow.outputParameters?.length || 0} 个
+          </p>
+          {(!selectedWorkflow.inputParameters || selectedWorkflow.inputParameters.length === 0) && 
+           (!selectedWorkflow.outputParameters || selectedWorkflow.outputParameters.length === 0) && (
+            <p className="text-xs text-blue-600 dark:text-blue-300">
+              💡 提示：如果工作流中有参数定义，请先在工作流编辑器中保存工作流，参数才会被同步到这里。
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  // 渲染步骤2：插件信息
+  const renderStep2 = () => (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold mb-4">插件信息</h3>
+      
+      {publishMode === 'version' && (
+        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <p className="text-sm text-blue-700 dark:text-blue-400">
+            <strong>版本模式:</strong> 您正在为已发布的插件创建新版本
+          </p>
+        </div>
+      )}
+
+      {/* 显示参数信息 */}
+      <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+        <p className="text-sm text-green-700 dark:text-green-400">
+          <strong>参数信息:</strong> 输入参数 {formData.inputSchema?.parameters?.length || 0} 个，输出参数 {formData.outputSchema?.parameters?.length || 0} 个
+        </p>
+        {(formData.inputSchema?.parameters?.length || 0) > 0 && (
+          <div className="text-xs text-green-600 dark:text-green-300 mt-2">
+            <strong>输入参数:</strong> {formData.inputSchema.parameters.map(p => p.name).join(', ')}
+          </div>
+        )}
+        {(formData.outputSchema?.parameters?.length || 0) > 0 && (
+          <div className="text-xs text-green-600 dark:text-green-300 mt-1">
+            <strong>输出参数:</strong> {formData.outputSchema.parameters.map(p => p.name).join(', ')}
+          </div>
+        )}
+      </div>
+      
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium mb-2">插件名称 *</label>
+          <Input
+            value={formData.name}
+            onChange={(e) => setFormData({...formData, name: e.target.value})}
+            placeholder="my-awesome-workflow"
+            disabled={publishMode === 'version'}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">显示名称 *</label>
+          <Input
+            value={formData.displayName}
+            onChange={(e) => setFormData({...formData, displayName: e.target.value})}
+            placeholder="我的超棒工作流"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-2">描述 *</label>
+        <textarea
+          value={formData.description}
+          onChange={(e) => setFormData({...formData, description: e.target.value})}
+          placeholder="工作流功能描述..."
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none h-20"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium mb-2">分类 *</label>
+          <select
+            value={formData.category}
+            onChange={(e) => setFormData({...formData, category: e.target.value as WorkflowPluginCategory})}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+          >
+            <option value="data_processing">数据处理</option>
+            <option value="api_integration">API集成</option>
+            <option value="ai_service">AI服务</option>
+            <option value="notification">通知服务</option>
+            <option value="utility">工具类</option>
+            <option value="business">业务逻辑</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">颜色</label>
+          <input
+            type="color"
+            value={formData.color}
+            onChange={(e) => setFormData({...formData, color: e.target.value})}
+            className="w-full h-10 border border-gray-300 rounded-lg"
+          />
+        </div>
+      </div>
+
+      {publishMode === 'version' && (
+        <div>
+          <label className="block text-sm font-medium mb-2">版本号 *</label>
+          <Input
+            value={formData.version}
+            onChange={(e) => setFormData({...formData, version: e.target.value})}
+            placeholder="1.0.1"
+          />
+          <p className="text-xs text-gray-500 mt-1">格式: major.minor.patch (如: 1.0.1)</p>
+        </div>
+      )}
+
+      <div>
+        <label className="block text-sm font-medium mb-2">标签</label>
+        <Input
+          value={formData.tags}
+          onChange={(e) => setFormData({...formData, tags: e.target.value})}
+          placeholder="标签1, 标签2, 标签3"
+        />
+        <p className="text-xs text-gray-500 mt-1">用逗号分隔多个标签</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div>
+          <label className="block text-sm font-medium mb-2">作者</label>
+          <Input
+            value={formData.author}
+            onChange={(e) => setFormData({...formData, author: e.target.value})}
+            placeholder="作者名称"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">主页</label>
+          <Input
+            value={formData.homepage}
+            onChange={(e) => setFormData({...formData, homepage: e.target.value})}
+            placeholder="https://..."
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">仓库</label>
+          <Input
+            value={formData.repository}
+            onChange={(e) => setFormData({...formData, repository: e.target.value})}
+            placeholder="https://github.com/..."
+          />
+        </div>
+      </div>
     </div>
   )
 
@@ -957,11 +1615,12 @@ const PublishWorkflowModal: React.FC<{
               variant="outline"
               size="sm"
               onClick={() => {
+                const currentParams = formData.inputSchema?.parameters || []
                 setFormData({
                   ...formData,
                   inputSchema: {
                     parameters: [
-                      ...formData.inputSchema.parameters,
+                      ...currentParams,
                       { name: '', type: 'string', required: false, description: '' }
                     ]
                   }
@@ -973,7 +1632,7 @@ const PublishWorkflowModal: React.FC<{
           </div>
           
           <div className="space-y-3 max-h-64 overflow-y-auto">
-            {formData.inputSchema.parameters.map((param, index) => (
+            {(formData.inputSchema?.parameters || []).map((param, index) => (
               <div key={index} className="p-3 border border-gray-200 rounded-lg">
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <Input
@@ -1062,11 +1721,12 @@ const PublishWorkflowModal: React.FC<{
               variant="outline"
               size="sm"
               onClick={() => {
+                const currentParams = formData.outputSchema?.parameters || []
                 setFormData({
                   ...formData,
                   outputSchema: {
                     parameters: [
-                      ...formData.outputSchema.parameters,
+                      ...currentParams,
                       { name: '', type: 'string', required: false, description: '' }
                     ]
                   }
@@ -1078,7 +1738,7 @@ const PublishWorkflowModal: React.FC<{
           </div>
           
           <div className="space-y-3 max-h-64 overflow-y-auto">
-            {formData.outputSchema.parameters.map((param, index) => (
+            {(formData.outputSchema?.parameters || []).map((param, index) => (
               <div key={index} className="p-3 border border-gray-200 rounded-lg">
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <Input
@@ -1206,7 +1866,7 @@ const PublishWorkflowModal: React.FC<{
               loading={loading}
               disabled={loading || !formData.name || !formData.displayName || !formData.description}
             >
-              发布插件
+              {publishMode === 'new' ? '发布插件' : '更新插件'}
             </Button>
           )}
         </div>

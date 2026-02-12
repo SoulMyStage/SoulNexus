@@ -906,7 +906,7 @@ func (h *Handlers) ResolveDeviceError(c *gin.Context) {
 	}
 
 	// 标记为已解决
-	if err := models.ResolveDeviceError(h.db, uint(errorID), user.Username); err != nil {
+	if err := models.ResolveDeviceError(h.db, uint(errorID), user.DisplayName); err != nil {
 		logger.Error("标记错误为已解决失败", zap.Error(err), zap.Uint64("errorId", errorID))
 		response.Fail(c, "标记失败", nil)
 		return

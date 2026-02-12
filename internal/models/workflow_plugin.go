@@ -135,8 +135,8 @@ type WorkflowPluginInstallation struct {
 
 // Value implements driver.Valuer for WorkflowPluginIOSchema
 func (s WorkflowPluginIOSchema) Value() (driver.Value, error) {
-	if len(s.Parameters) == 0 {
-		return nil, nil
+	if s.Parameters == nil {
+		s.Parameters = []WorkflowPluginParameter{}
 	}
 	return json.Marshal(s)
 }
@@ -144,7 +144,7 @@ func (s WorkflowPluginIOSchema) Value() (driver.Value, error) {
 // Scan implements sql.Scanner for WorkflowPluginIOSchema
 func (s *WorkflowPluginIOSchema) Scan(value interface{}) error {
 	if value == nil {
-		*s = WorkflowPluginIOSchema{}
+		*s = WorkflowPluginIOSchema{Parameters: []WorkflowPluginParameter{}}
 		return nil
 	}
 	bytes, ok := value.([]byte)
@@ -152,10 +152,14 @@ func (s *WorkflowPluginIOSchema) Scan(value interface{}) error {
 		return fmt.Errorf("WorkflowPluginIOSchema: expected []byte, got %T", value)
 	}
 	if len(bytes) == 0 {
-		*s = WorkflowPluginIOSchema{}
+		*s = WorkflowPluginIOSchema{Parameters: []WorkflowPluginParameter{}}
 		return nil
 	}
-	return json.Unmarshal(bytes, s)
+	err := json.Unmarshal(bytes, s)
+	if err == nil && s.Parameters == nil {
+		s.Parameters = []WorkflowPluginParameter{}
+	}
+	return err
 }
 
 // MigrateWorkflowPluginTables 迁移工作流插件相关表

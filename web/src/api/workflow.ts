@@ -83,11 +83,22 @@ export interface WorkflowDefinition {
   definition: WorkflowGraph
   settings?: Record<string, any>
   triggers?: WorkflowTriggerConfig
+  inputParameters?: WorkflowParameter[]
+  outputParameters?: WorkflowParameter[]
   tags?: string[]
   createdBy: string
   updatedBy: string
   createdAt: string
   updatedAt: string
+}
+
+// 工作流参数定义
+export interface WorkflowParameter {
+  name: string
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
+  required: boolean
+  description?: string
+  default?: any
 }
 
 // 工作流版本
@@ -156,6 +167,8 @@ export interface UpdateWorkflowDefinitionRequest {
   definition?: WorkflowGraph
   settings?: Record<string, any>
   triggers?: WorkflowTriggerConfig
+  inputParameters?: WorkflowParameter[]
+  outputParameters?: WorkflowParameter[]
   tags?: string[]
   version: number // 必须提供当前版本号，用于乐观锁
   changeNote?: string // 版本变更说明

@@ -91,9 +91,7 @@ func (e *EndNode) Run(ctx *WorkflowContext) ([]string, error) {
 		// Log final output with values
 		outputJSON, err := json.Marshal(outputs)
 		if err == nil {
-			ctx.AddLog("info", fmt.Sprintf("End node final output: %s", string(outputJSON)), e.ID, e.Name)
-		} else {
-			ctx.AddLog("info", fmt.Sprintf("End node organized %d output field(s) as workflow result", len(outputs)), e.ID, e.Name)
+			ctx.AddLog("info", fmt.Sprintf("Output: %s", string(outputJSON)), e.ID, e.Name)
 		}
 	} else {
 		// If no OutputParams defined, store all collected data as workflow result
@@ -103,13 +101,10 @@ func (e *EndNode) Run(ctx *WorkflowContext) ([]string, error) {
 			// Log final output with values
 			outputJSON, err := json.Marshal(allData)
 			if err == nil {
-				ctx.AddLog("info", fmt.Sprintf("End node final output: %s", string(outputJSON)), e.ID, e.Name)
-			} else {
-				ctx.AddLog("info", fmt.Sprintf("End node collected %d data field(s) as workflow result", len(allData)), e.ID, e.Name)
+				ctx.AddLog("info", fmt.Sprintf("Output: %s", string(outputJSON)), e.ID, e.Name)
 			}
 		} else {
 			ctx.SetData("workflow_result", map[string]interface{}{})
-			ctx.AddLog("info", "End node completed with empty result", e.ID, e.Name)
 		}
 	}
 

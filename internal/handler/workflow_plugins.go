@@ -90,8 +90,8 @@ func (h *WorkflowPluginHandler) PublishWorkflowAsPlugin(c *gin.Context) {
 		Icon:             req.Icon,
 		Color:            req.Color,
 		Tags:             models.StringArray(req.Tags),
-		InputSchema:      req.InputSchema,
-		OutputSchema:     req.OutputSchema,
+		InputSchema:      ensureIOSchema(req.InputSchema),
+		OutputSchema:     ensureIOSchema(req.OutputSchema),
 		WorkflowSnapshot: workflow.Definition,
 		Author:           req.Author,
 		Homepage:         req.Homepage,
@@ -299,16 +299,16 @@ func (h *WorkflowPluginHandler) UpdateWorkflowPlugin(c *gin.Context) {
 	// 如果有新版本，创建版本记录
 	if req.Version != "" && req.Version != plugin.Version {
 		updates["version"] = req.Version
-		updates["input_schema"] = req.InputSchema
-		updates["output_schema"] = req.OutputSchema
+		updates["input_schema"] = ensureIOSchema(req.InputSchema)
+		updates["output_schema"] = ensureIOSchema(req.OutputSchema)
 
 		// 创建新版本记录
 		version := models.WorkflowPluginVersion{
 			PluginID:         plugin.ID,
 			Version:          req.Version,
 			WorkflowSnapshot: plugin.WorkflowSnapshot,
-			InputSchema:      req.InputSchema,
-			OutputSchema:     req.OutputSchema,
+			InputSchema:      ensureIOSchema(req.InputSchema),
+			OutputSchema:     ensureIOSchema(req.OutputSchema),
 			ChangeLog:        req.ChangeLog,
 		}
 
@@ -544,4 +544,41 @@ func (h *WorkflowPluginHandler) GetUserWorkflowPlugins(c *gin.Context) {
 	}
 
 	response.Success(c, "查询成功", plugins)
+}
+
+// GetWorkflowPublishedPlugin 获取工作流已发布的插件信息
+func (h *WorkflowPluginHandler) GetWorkflowPublishedPlugin(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == 0 {
+		response.Fail(c, "未授权", nil)
+		return
+	}
+
+	workflowID, err := strconv.ParseUint(c.Param("workflowId"), 10, 32)
+	if err != nil {
+		response.Fail(c, "无效的工作流ID", nil)
+		return
+	}
+
+	var plugin models.WorkflowPlugin
+	if err := h.db.Where("workflow_id = ? AND user_id = ?", workflowID, userID).
+		First(&plugin).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// 工作流未发布过插件
+			response.Success(c, "工作流未发布过插件", nil)
+		} else {
+			response.Fail(c, "查询失败: "+err.Error(), nil)
+		}
+		return
+	}
+
+	response.Success(c, "查询成功", plugin)
+}
+
+// ensureIOSchema 确保 IOSchema 不为 nil，如果为 nil 则返回空的 IOSchema
+func ensureIOSchema(schema models.WorkflowPluginIOSchema) models.WorkflowPluginIOSchema {
+	if schema.Parameters == nil {
+		schema.Parameters = []models.WorkflowPluginParameter{}
+	}
+	return schema
 }

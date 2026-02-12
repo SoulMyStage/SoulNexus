@@ -81,16 +81,12 @@ func (s *HardwareSession) handleListenMessage(msg map[string]interface{}) {
 func (s *HardwareSession) handleAbortMessage() {
 	s.logger.Info("[Session] 收到中断请求，停止 LLM 和 TTS")
 	if s.llmService != nil {
-		if err := s.llmService.GetProvider().Interrupt(); err != nil {
-			s.logger.Warn("[Session] LLM 中断失败", zap.Error(err))
-			s.logSessionError("LLM", "WARN", "LLM_INTERRUPT_ERROR", fmt.Sprintf("LLM 中断失败: %v", err), "", "Failed to interrupt LLM")
-		}
+		s.llmService.GetProvider().Interrupt()
+		s.logger.Info("[Session] LLM 已中断")
 	}
 	if s.ttsPipeline != nil {
-		if err := s.ttsPipeline.Interrupt(); err != nil {
-			s.logger.Warn("[Session] TTS 中断失败", zap.Error(err))
-			s.logSessionError("TTS", "WARN", "TTS_INTERRUPT_ERROR", fmt.Sprintf("TTS 中断失败: %v", err), "", "Failed to interrupt TTS")
-		}
+		s.ttsPipeline.Interrupt()
+		s.logger.Info("[Session] TTS 已中断")
 	}
 	if s.writer != nil {
 		s.writer.ClearTTSQueue()
@@ -421,10 +417,8 @@ func (s *HardwareSession) handleAudio(data []byte) error {
 	}
 
 	if voiceprintTool != nil {
-		if err := voiceprintTool.AddAudioFrame(data); err != nil {
-			s.logger.Warn("[Session] 声纹识别处理失败", zap.Error(err))
-			s.logSessionError("VOICEPRINT", "WARN", "VOICEPRINT_PROCESS_ERROR", fmt.Sprintf("声纹识别处理失败: %v", err), "", "Voiceprint processing failed")
-		}
+		voiceprintTool.AddAudioFrame(data)
+		s.logger.Debug("[Session] 声纹识别已处理音频帧")
 	}
 
 	err := pipeline.ProcessInput(s.ctx, data)

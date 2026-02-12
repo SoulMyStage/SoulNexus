@@ -117,3 +117,4 @@ logs
 *.so
 .Python
 xiaozhi-server/
+dist/

@@ -738,6 +738,9 @@ func (h *Handlers) registerWorkflowPluginRoutes(r *gin.RouterGroup) {
 		// 发布工作流为插件
 		pluginsAuth.POST("/publish/:workflowId", pluginHandler.PublishWorkflowAsPlugin)
 
+		// 获取工作流已发布的插件信息
+		pluginsAuth.GET("/workflow/:workflowId/published", pluginHandler.GetWorkflowPublishedPlugin)
+
 		// 插件管理
 		pluginsAuth.PUT("/:id", pluginHandler.UpdateWorkflowPlugin)
 		pluginsAuth.DELETE("/:id", pluginHandler.DeleteWorkflowPlugin)

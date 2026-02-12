@@ -51,6 +51,13 @@ func SetupDatabase(logWriter io.Writer, opts *Options) (*gorm.DB, error) {
 
 	// 3) Migrate entities
 	if opts.AutoMigrate {
+		// 首先执行迁移 SQL 脚本
+		migrationsDir := "cmd/bootstrap/migrations"
+		if err := runMigrationScripts(db, migrationsDir); err != nil {
+			logger.Warn("run migration scripts failed", zap.String("dir", migrationsDir), zap.Error(err))
+			// 不中断流程，继续执行 GORM 迁移
+		}
+
 		if err := RunMigrations(db); err != nil {
 			logger.Error("migration failed", zap.Error(err))
 			return nil, err
@@ -125,6 +132,37 @@ func RunInitSQL(db *gorm.DB, sqlFilePath string) error {
 		}
 	}
 	return scanner.Err()
+}
+
+// runMigrationScripts executes all .sql files in the migrations directory
+func runMigrationScripts(db *gorm.DB, migrationsDir string) error {
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 迁移目录不存在，跳过
+			return nil
+		}
+		return err
+	}
+
+	// 按文件名排序执行迁移脚本
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+
+		filePath := migrationsDir + "/" + entry.Name()
+		logger.Info("executing migration script", zap.String("file", filePath))
+		if err := RunInitSQL(db, filePath); err != nil {
+			logger.Error("migration script failed", zap.String("file", filePath), zap.Error(err))
+			return err
+		}
+	}
+
+	return nil
 }
 
 // RunMigrations executes entity migration
