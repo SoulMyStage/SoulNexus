@@ -237,13 +237,6 @@ func defaultGoScriptRuntime(ctx *WorkflowContext, script string, inputs map[stri
 	// 执行 Run 函数
 	result, err := runFunc(inputs)
 
-	// 确保所有缓冲的输出都被刷新
-	if originalStdout != nil {
-		originalStdout.Sync()
-	}
-	if originalStderr != nil {
-		originalStderr.Sync()
-	}
 	return result, err
 }
 

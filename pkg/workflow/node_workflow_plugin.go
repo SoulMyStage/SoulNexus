@@ -29,29 +29,12 @@ func (w *WorkflowPluginNode) Run(ctx *WorkflowContext) ([]string, error) {
 	}
 
 	// 准备输入数据
-	inputs := make(map[string]interface{})
-
-	// 从插件的输入参数定义中获取数据
-	if w.Plugin.InputSchema.Parameters != nil {
-		for _, param := range w.Plugin.InputSchema.Parameters {
-			// 尝试从上下文中解析值
-			if value, exists := ctx.ResolveValue(param.Name); exists {
-				inputs[param.Name] = value
-			} else if w.Parameters != nil {
-				// 从用户配置的参数中获取
-				if value, exists := w.Parameters[param.Name]; exists {
-					inputs[param.Name] = value
-				} else if param.Required {
-					return nil, fmt.Errorf("必需的输入参数 %s 未提供", param.Name)
-				} else if param.Default != nil {
-					inputs[param.Name] = param.Default
-				}
-			} else if param.Required {
-				return nil, fmt.Errorf("必需的输入参数 %s 未提供", param.Name)
-			} else if param.Default != nil {
-				inputs[param.Name] = param.Default
-			}
-		}
+	// 使用 PrepareInputs 方法从上下文中获取输入数据
+	// 这会根据 InputParams 的映射关系正确解析数据
+	inputs, err := w.Node.PrepareInputs(ctx)
+	if err != nil {
+		ctx.AddLog("error", fmt.Sprintf("准备输入参数失败: %v", err), w.ID, w.Name)
+		return nil, err
 	}
 
 	// 记录输入参数
@@ -67,20 +50,15 @@ func (w *WorkflowPluginNode) Run(ctx *WorkflowContext) ([]string, error) {
 		return nil, err
 	}
 
-	// 处理输出数据
-	if w.Plugin.OutputSchema.Parameters != nil {
-		for _, param := range w.Plugin.OutputSchema.Parameters {
-			if value, exists := result[param.Name]; exists {
-				ctx.SetData(fmt.Sprintf("%s.%s", w.ID, param.Name), value)
-			}
-		}
-	}
-
 	// 记录输出参数
 	if len(result) > 0 {
 		outputJSON, _ := json.Marshal(result)
 		ctx.AddLog("info", fmt.Sprintf("Output: %s", string(outputJSON)), w.ID, w.Name)
 	}
+
+	// 使用 PersistOutputs 方法将输出存储到上下文中
+	// 这会根据 OutputParams 的映射关系正确存储数据
+	w.Node.PersistOutputs(ctx, result)
 
 	ctx.AddLog("success", "工作流插件执行完成", w.ID, w.Name)
 	return w.NextNodes, nil
@@ -134,6 +112,24 @@ func (w *WorkflowPluginNode) executeWorkflowPlugin(ctx *WorkflowContext, inputs 
 		subWorkflow.Context.Parameters[k] = v
 	}
 
+	// 同时将输入参数存储到 NodeData 中，以支持子工作流中引用父工作流开始节点的参数
+	// 这是为了处理子工作流的开始节点的 inputMap 中可能引用父工作流开始节点 ID 的情况
+	if subWorkflow.Context.NodeData == nil {
+		subWorkflow.Context.NodeData = make(map[string]interface{})
+	}
+
+	// 获取父工作流的开始节点 ID（从当前上下文中推断）
+	// 实际上，我们需要从父工作流中获取开始节点 ID
+	// 但这里我们没有父工作流的引用，所以我们只能尝试从 ctx 中推断
+	// 一个更好的方案是在工作流插件节点中传递父工作流的开始节点 ID
+
+	// 为了支持子工作流中引用父工作流开始节点的参数，我们需要在 NodeData 中创建对应的结构
+	// 例如：如果子工作流的开始节点的 inputMap 是 {"city": "start-xxx.city"}
+	// 我们需要在 NodeData 中创建 {"start-xxx": {"city": value}}
+
+	// 但我们不知道父工作流的开始节点 ID，所以我们需要从工作流插件节点中获取
+	// 这需要修改工作流插件节点的构造或执行逻辑
+
 	// 设置日志转发 - 将子工作流的日志转发到父工作流
 	if ctx.LogSender != nil {
 		subWorkflow.Context.LogSender = &SubWorkflowLogForwarder{
@@ -159,30 +155,26 @@ func (w *WorkflowPluginNode) executeWorkflowPlugin(ctx *WorkflowContext, inputs 
 
 	// 从子工作流的上下文中提取结果
 	if subWorkflow.Context != nil && subWorkflow.Context.NodeData != nil {
-		// 如果有输出参数定义，按照定义提取结果
-		if w.Plugin.OutputSchema.Parameters != nil {
+		// 首先尝试从 workflow_result 中获取结果（这是结束节点设置的）
+		if workflowResult, exists := subWorkflow.Context.NodeData["workflow_result"]; exists {
+			if resultMap, ok := workflowResult.(map[string]interface{}); ok {
+				result = resultMap
+			}
+		}
+
+		// 如果没有找到 workflow_result，尝试从输出参数定义中提取
+		if len(result) == 0 && w.Plugin.OutputSchema.Parameters != nil {
 			for _, param := range w.Plugin.OutputSchema.Parameters {
 				// 尝试从子工作流的结果中获取对应的输出
 				if value, exists := subWorkflow.Context.NodeData[param.Name]; exists {
 					result[param.Name] = value
-				} else {
-					// 如果没有找到，尝试从结束节点的输出中获取
-					for _, nodeData := range subWorkflow.Context.NodeData {
-						if nodeData != nil {
-							if dataMap, ok := nodeData.(map[string]interface{}); ok {
-								if value, exists := dataMap[param.Name]; exists {
-									result[param.Name] = value
-									break
-								}
-							}
-						}
-					}
 				}
 			}
-		} else {
-			// 如果没有输出参数定义，返回所有结果数据
-			result["subworkflow_result"] = subWorkflow.Context.NodeData
-			result["success"] = true
+		}
+
+		// 如果仍然没有找到结果，返回所有 NodeData
+		if len(result) == 0 {
+			result = subWorkflow.Context.NodeData
 		}
 	}
 

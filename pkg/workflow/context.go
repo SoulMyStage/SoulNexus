@@ -186,6 +186,17 @@ func (ctx *WorkflowContext) ResolveValue(key string) (interface{}, bool) {
 						return current, true
 					}
 				}
+
+				// If not found in NodeData, try to extract the last part from Parameters
+				// This handles cases like "start-xxx.city" where we should look for "city" in Parameters
+				if len(path) > 0 {
+					lastPart := path[len(path)-1]
+					if ctx.Parameters != nil {
+						if val, ok := ctx.Parameters[lastPart]; ok {
+							return val, true
+						}
+					}
+				}
 			}
 		}
 	}
@@ -207,7 +218,7 @@ func (ctx *WorkflowContext) ResolveValue(key string) (interface{}, bool) {
 	return nil, false
 }
 
-// SetData writes data to node data map
+// SetData writes data to node data map, supporting nested keys like "nodeId.field"
 func (ctx *WorkflowContext) SetData(key string, value interface{}) {
 	if ctx == nil {
 		return
@@ -215,5 +226,34 @@ func (ctx *WorkflowContext) SetData(key string, value interface{}) {
 	if ctx.NodeData == nil {
 		ctx.NodeData = make(map[string]interface{})
 	}
+
+	// Support nested keys like "nodeId.field" or "nodeId.field.subfield"
+	if strings.Contains(key, ".") {
+		parts := strings.Split(key, ".")
+		if len(parts) >= 2 {
+			// Navigate/create nested structure
+			current := ctx.NodeData
+			for _, part := range parts[:len(parts)-1] {
+				if _, ok := current[part]; !ok {
+					// Create nested map if it doesn't exist
+					current[part] = make(map[string]interface{})
+				}
+
+				// Move to next level
+				if nextMap, ok := current[part].(map[string]interface{}); ok {
+					current = nextMap
+				} else {
+					// If we can't navigate further, just set at current level
+					current[key] = value
+					return
+				}
+			}
+			// Set the final value
+			current[parts[len(parts)-1]] = value
+			return
+		}
+	}
+
+	// Direct key (no dots)
 	ctx.NodeData[key] = value
 }

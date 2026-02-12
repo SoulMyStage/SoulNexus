@@ -40,8 +40,20 @@ func (e *EndNode) Run(ctx *WorkflowContext) ([]string, error) {
 	}
 
 	// Also try to get data from node-specific keys (format: nodeId.outputName)
+	// We need to flatten nested structures like {"nodeId": {"outputName": value}}
 	for key, val := range ctx.NodeData {
 		allData[key] = val
+
+		// If the value is a map, also add its nested keys with dot notation
+		if nestedMap, ok := val.(map[string]interface{}); ok {
+			for nestedKey, nestedVal := range nestedMap {
+				flatKey := fmt.Sprintf("%s.%s", key, nestedKey)
+				allData[flatKey] = nestedVal
+				if ctx != nil {
+					ctx.AddLog("debug", fmt.Sprintf("EndNode: flattened %s -> %s", key, flatKey), e.ID, e.Name)
+				}
+			}
+		}
 	}
 
 	// End node uses OutputParams to define the final output structure
@@ -57,6 +69,8 @@ func (e *EndNode) Run(ctx *WorkflowContext) ([]string, error) {
 				if val, ok := ctx.ResolveValue(sourceKey); ok {
 					outputs[outputName] = val
 				} else {
+					// Debug: log what we're looking for
+					ctx.AddLog("debug", fmt.Sprintf("EndNode: ResolveValue failed for %s (sourceKey=%s). Available keys in allData: %v", outputName, sourceKey, getMapKeys(allData)), e.ID, e.Name)
 					outputs[outputName] = nil
 				}
 			} else {
@@ -79,6 +93,8 @@ func (e *EndNode) Run(ctx *WorkflowContext) ([]string, error) {
 							}
 						}
 						if !found {
+							// Debug: log what we're looking for
+							ctx.AddLog("debug", fmt.Sprintf("EndNode: Could not find %s in allData. Available keys: %v", outputName, getMapKeys(allData)), e.ID, e.Name)
 							outputs[outputName] = nil
 						}
 					}

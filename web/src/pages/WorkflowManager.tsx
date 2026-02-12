@@ -562,16 +562,24 @@ const WorkflowManager: React.FC = () => {
                               const incomingEdge = workflow.connections.find(conn => conn.target === node.id)
                               if (incomingEdge) {
                                 const sourceNode = workflow.nodes.find(n => n.id === incomingEdge.source)
-                                if (sourceNode && sourceNode.type === 'ai_chat') {
-                                  // 如果上游是 AI 对话节点，使用其 outputVariable
-                                  const outputVar = sourceNode.data.config?.outputVariable
-                                  if (outputVar) {
-                                    outputMap[output] = `${sourceNode.id}.${outputVar}`
+                                if (sourceNode) {
+                                  if (sourceNode.type === 'ai_chat') {
+                                    // 如果上游是 AI 对话节点，使用其 outputVariable
+                                    const outputVar = sourceNode.data.config?.outputVariable
+                                    if (outputVar) {
+                                      outputMap[output] = `${sourceNode.id}.${outputVar}`
+                                    } else {
+                                      outputMap[output] = output
+                                    }
+                                  } else if (sourceNode.type === 'workflow_plugin' || sourceNode.type === 'script') {
+                                    // 如果上游是工作流插件或脚本节点，使用 nodeId.outputName 格式
+                                    outputMap[output] = `${sourceNode.id}.${output}`
                                   } else {
+                                    // 其他节点类型，使用默认逻辑
                                     outputMap[output] = output
                                   }
                                 } else {
-                                  // 其他节点类型，使用默认逻辑
+                                  // 没有找到上游节点，使用默认逻辑
                                   outputMap[output] = output
                                 }
                               } else {
@@ -604,9 +612,46 @@ const WorkflowManager: React.FC = () => {
                         if (node.inputs && node.inputs.length > 0) {
                           node.inputs.forEach((input) => {
                             if (input && input.trim()) {
-                              // 默认情况下，source 就是参数名本身
-                              // 实际运行时，系统会尝试从上下文解析这个值
-                              inputMap[input] = input
+                              // 查找连接到此节点的上游节点
+                              const incomingEdge = workflow.connections.find(conn => conn.target === node.id)
+                              if (incomingEdge) {
+                                const sourceNode = workflow.nodes.find(n => n.id === incomingEdge.source)
+                                if (sourceNode) {
+                                  // 根据源节点类型确定输出参数名
+                                  let sourceOutput = input // 默认使用相同的参数名
+                                  
+                                  if (sourceNode.type === 'workflow_plugin') {
+                                    // 工作流插件节点：输出参数来自 outputMap
+                                    // 查找匹配的输出参数
+                                    const sourceOutputMap = sourceNode.data._outputMap || sourceNode.data.config?.outputMap || {}
+                                    // 尝试找到匹配的输出参数
+                                    for (const [key, value] of Object.entries(sourceOutputMap)) {
+                                      if (key === input || value === input) {
+                                        sourceOutput = key
+                                        break
+                                      }
+                                    }
+                                    // 如果没找到，使用第一个输出参数
+                                    if (!sourceOutput && sourceNode.outputs && sourceNode.outputs.length > 0) {
+                                      sourceOutput = sourceNode.outputs[0]
+                                    }
+                                    inputMap[input] = `${sourceNode.id}.${sourceOutput}`
+                                  } else if (sourceNode.type === 'ai_chat') {
+                                    // AI对话节点：使用 outputVariable
+                                    const outputVar = sourceNode.data.config?.outputVariable || 'ai_response'
+                                    inputMap[input] = `${sourceNode.id}.${outputVar}`
+                                  } else {
+                                    // 其他节点类型：使用 nodeId.outputName 格式
+                                    inputMap[input] = `${sourceNode.id}.${sourceOutput}`
+                                  }
+                                } else {
+                                  // 找不到源节点，使用默认值
+                                  inputMap[input] = input
+                                }
+                              } else {
+                                // 没有上游连接，使用默认值
+                                inputMap[input] = input
+                              }
                             }
                           })
                         }
