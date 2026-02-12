@@ -707,8 +707,8 @@ const DeviceDetail: React.FC = () => {
                             onGetAnalysis={async (recordingId) => {
                                 try {
                                     const response = await getCallRecordingAnalysis(recordingId);
-                                    if (response.code === 200 && response.data.analysis) {
-                                        return response.data.analysis;
+                                    if (response.code === 200) {
+                                        return response.data;
                                     }
                                     throw new Error('获取分析结果失败');
                                 } catch (error: any) {

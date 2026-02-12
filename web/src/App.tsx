@@ -19,6 +19,7 @@ import Profile from "@/pages/Profile.tsx";
 import AnimationShowcase from "@/pages/AnimationShowcase.tsx";
 import Layout from "@/components/Layout/Layout.tsx";
 import KnowledgeBase from "@/pages/KnowledgeBase.tsx";
+import KnowledgeBaseDetail from "@/pages/KnowledgeBaseDetail.tsx";
 import ResetPassword from "@/pages/ResetPassword.tsx";
 import CredentialManager from "@/pages/CredentialManager.tsx";
 import ProtectedRoute from "@/components/Auth/ProtectedRoute.tsx";
@@ -82,6 +83,13 @@ function App() {
                             <ProtectedRoute>
                                 <Layout>
                                     <KnowledgeBase />
+                                </Layout>
+                            </ProtectedRoute>
+                        } />
+                        <Route path="/knowledge/:knowledgeKey" element={
+                            <ProtectedRoute>
+                                <Layout>
+                                    <KnowledgeBaseDetail />
                                 </Layout>
                             </ProtectedRoute>
                         } />

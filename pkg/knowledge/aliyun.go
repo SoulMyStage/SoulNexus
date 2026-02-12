@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"time"
 
 	bailian20231229 "github.com/alibabacloud-go/bailian-20231229/v2/client"
 	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
@@ -122,7 +123,8 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 
 	// Check response result
 	if response.GetBody() == nil || response.GetBody().Data == nil {
-		return nil, fmt.Errorf("knowledge base returned empty data")
+		// Return empty results instead of error for empty knowledge bases
+		return []SearchResult{}, nil
 	}
 
 	// Convert to unified result format
@@ -131,6 +133,12 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 	maxResults := options.TopK
 	if maxResults <= 0 {
 		maxResults = 5 // Default to 5 if not specified
+	}
+
+	// Handle case where Data.Nodes is nil or empty
+	if response.GetBody().Data.GetNodes() == nil || len(response.GetBody().Data.GetNodes()) == 0 {
+		// Empty knowledge base or no results found - this is normal
+		return []SearchResult{}, nil
 	}
 
 	for _, node := range response.GetBody().Data.GetNodes() {
@@ -185,11 +193,8 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 
 // CreateIndex creates knowledge base index
 func (a *aliyunKnowledgeBase) CreateIndex(ctx context.Context, name string, config map[string]interface{}) (string, error) {
-	// Get fileId from config (if provided)
+	// Get fileId from config (optional for empty index)
 	fileId := getStringFromConfig(config, "file_id")
-	if fileId == "" {
-		return "", fmt.Errorf("file_id is required for creating index")
-	}
 
 	// Use type from config or default value
 	structType := getStringFromConfig(config, ConfigKeyAliyunStructType)
@@ -211,8 +216,13 @@ func (a *aliyunKnowledgeBase) CreateIndex(ctx context.Context, name string, conf
 		Name:          tea.String(name),
 		SourceType:    tea.String(sourceType),
 		SinkType:      tea.String(sinkType),
-		DocumentIds:   []*string{tea.String(fileId)},
 	}
+
+	// Only add DocumentIds if fileId is provided
+	if fileId != "" {
+		createIndexRequest.DocumentIds = []*string{tea.String(fileId)}
+	}
+
 	runtime := &teaUtil.RuntimeOptions{}
 
 	response, err := a.client.CreateIndexWithOptions(tea.String(a.workspaceId), createIndexRequest, headers, runtime)
@@ -236,12 +246,36 @@ func (a *aliyunKnowledgeBase) CreateIndex(ctx context.Context, name string, conf
 		return "", fmt.Errorf("failed to submit index: %w", err)
 	}
 
+	// 检查 submitResponse 是否为 nil
+	if submitResponse == nil {
+		return "", fmt.Errorf("submit index response is nil")
+	}
+
+	// 检查响应体是否为 nil
+	if submitResponse.GetBody() == nil || submitResponse.GetBody().Data == nil || submitResponse.GetBody().Data.Id == nil {
+		message := ""
+		if submitResponse.GetBody() != nil && submitResponse.GetBody().Message != nil {
+			message = *submitResponse.GetBody().Message
+		}
+		return "", fmt.Errorf("failed to submit index job: %s", message)
+	}
+
 	jobId := *submitResponse.GetBody().Data.Id
 
 	// Wait for index job to complete (simplified handling here, should poll status in practice)
-	_, err = a.getIndexJobStatus(jobId, indexId)
+	statusResponse, err := a.getIndexJobStatus(jobId, indexId)
 	if err != nil {
 		return "", fmt.Errorf("failed to get index status: %w", err)
+	}
+
+	// 检查 statusResponse 是否为 nil
+	if statusResponse == nil {
+		return "", fmt.Errorf("index job status response is nil")
+	}
+
+	// 检查响应体是否为 nil
+	if statusResponse.GetBody() == nil {
+		return "", fmt.Errorf("index job status response body is nil")
 	}
 
 	return indexId, nil
@@ -311,10 +345,46 @@ func (a *aliyunKnowledgeBase) UploadDocument(ctx context.Context, knowledgeKey s
 
 	fileId := *fileResponse.GetBody().Data.FileId
 
-	// 5. 将文件添加到知识库
-	_, err = a.submitIndexAddDocumentsJob(knowledgeKey, fileId)
+	// 5. Create index if it doesn't exist (lazy creation on first file upload)
+	// Try to create index with this file - if it fails, it might already exist
+	createConfig := map[string]interface{}{
+		"file_id":                 fileId,
+		ConfigKeyAliyunStructType: a.structType,
+		ConfigKeyAliyunSourceType: a.sourceType,
+		ConfigKeyAliyunSinkType:   a.sinkType,
+	}
+
+	indexCreated := false
+	_, err = a.CreateIndex(ctx, knowledgeKey, createConfig)
 	if err != nil {
+		// Index creation might fail if it already exists, which is OK
+		// We'll just log it and continue
+		fmt.Printf("Note: Index creation returned: %v (may already exist, will try to add document anyway)\n", err)
+	} else {
+		indexCreated = true
+		fmt.Printf("Index created successfully for knowledge key: %s\n", knowledgeKey)
+	}
+
+	// 6. 将文件添加到知识库
+	jobResponse, err := a.submitIndexAddDocumentsJob(knowledgeKey, fileId)
+	if err != nil {
+		// If adding document fails and we just created the index, it might be because the index isn't ready yet
+		if indexCreated {
+			return fmt.Errorf("提交添加文档任务失败（索引刚创建）: %w", err)
+		}
+		// If index already existed, this is a real error
 		return fmt.Errorf("提交添加文档任务失败: %w", err)
+	}
+
+	// 7. Wait for indexing job to complete (poll status)
+	if jobResponse != nil && jobResponse.GetBody() != nil && jobResponse.GetBody().Data != nil {
+		jobId := jobResponse.GetBody().Data.Id
+		if jobId != nil {
+			err = a.waitForIndexJobCompletion(*jobId, knowledgeKey)
+			if err != nil {
+				return fmt.Errorf("等待索引完成失败: %w", err)
+			}
+		}
 	}
 
 	return nil
@@ -391,6 +461,42 @@ func (a *aliyunKnowledgeBase) submitIndexAddDocumentsJob(indexId, fileId string)
 	}
 	runtime := &teaUtil.RuntimeOptions{}
 	return a.client.SubmitIndexAddDocumentsJobWithOptions(tea.String(a.workspaceId), request, headers, runtime)
+}
+
+// waitForIndexJobCompletion polls the job status until it completes
+func (a *aliyunKnowledgeBase) waitForIndexJobCompletion(jobId, indexId string) error {
+	maxRetries := 60                 // Max 60 retries
+	retryInterval := time.Second * 2 // 2 seconds between retries
+
+	for i := 0; i < maxRetries; i++ {
+		statusResponse, err := a.getIndexJobStatus(jobId, indexId)
+		if err != nil {
+			return fmt.Errorf("failed to get job status: %w", err)
+		}
+
+		if statusResponse == nil || statusResponse.GetBody() == nil || statusResponse.GetBody().Data == nil {
+			return fmt.Errorf("invalid status response")
+		}
+
+		status := statusResponse.GetBody().Data.Status
+		if status == nil {
+			return fmt.Errorf("status is nil")
+		}
+
+		// Check if job is completed
+		if *status == "SUCCEEDED" {
+			return nil
+		}
+
+		if *status == "FAILED" {
+			return fmt.Errorf("indexing job failed")
+		}
+
+		// Job is still running, wait and retry
+		time.Sleep(retryInterval)
+	}
+
+	return fmt.Errorf("indexing job timeout after %d retries", maxRetries)
 }
 
 // 注意：getStringFromConfig 已移至 config.go

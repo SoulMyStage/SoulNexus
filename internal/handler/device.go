@@ -1042,6 +1042,14 @@ func (h *Handlers) AnalyzeCallRecording(c *gin.Context) {
 		response.Fail(c, "录音不存在", nil)
 		return
 	}
+
+	// 设置分析状态为 analyzing
+	if err := h.db.Model(&recording).Update("analysis_status", "analyzing").Error; err != nil {
+		logger.Error("更新分析状态失败", zap.Error(err), zap.Uint("recordingID", recording.ID))
+		response.Fail(c, "启动分析失败", nil)
+		return
+	}
+
 	go func() {
 		ctx := context.Background()
 		conversationDetails, err := recording.GetConversationDetails()

@@ -309,7 +309,22 @@ func GenerateKnowledgeKey(userID int, knowledgeName string) string {
 	return fmt.Sprintf("%d%s%s", userID, knowledge.KnowledgeNameSeparator, knowledgeName)
 }
 
-// GenerateKnowledgeName generates knowledge base name (prefix with userID)
+// GenerateKnowledgeName generates knowledge base name with length constraint for Aliyun (max 20 chars)
 func GenerateKnowledgeName(userID int, name string) string {
-	return fmt.Sprintf("%d%s%s", userID, knowledge.KnowledgeNameSeparator, name)
+	// 阿里云要求名称长度 1-20 个字符
+	// 使用 UUID 的前 8 位 + 用户名称的前几个字符
+	// 格式: kb_<8位UUID>
+
+	// 生成短 UUID (使用时间戳的后 8 位)
+	timestamp := time.Now().UnixNano() % 100000000 // 8 位数字
+
+	// 截断用户输入的名称，确保总长度不超过 20
+	// 格式: kb_<timestamp>_<name>
+	// 例如: kb_12345678_知识库
+	maxNameLen := 20 - 12 // 留出 "kb_12345678_" 的长度
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen]
+	}
+
+	return fmt.Sprintf("kb_%08d_%s", timestamp, name)
 }

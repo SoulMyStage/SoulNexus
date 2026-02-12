@@ -31,6 +31,50 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
     }
   }, [recordingDetail?.aiAnalysis]);
 
+  // 轮询获取分析结果
+  const pollForAnalysisResult = () => {
+    const maxAttempts = 60; // 最多轮询60次（约10分钟）
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        if (onGetAnalysis) {
+          const result = await onGetAnalysis(recording.id);
+          
+          // 检查分析状态
+          if (result?.analysisStatus === 'completed' && result?.analysis) {
+            setAnalysisResult(result.analysis);
+            setIsAnalyzing(false);
+            return;
+          } else if (result?.analysisStatus === 'failed') {
+            setAnalysisError(result?.analysisError || '分析失败');
+            setIsAnalyzing(false);
+            return;
+          }
+        }
+
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 10000); // 10秒后重试
+        } else {
+          setAnalysisError('分析超时，请稍后重试');
+          setIsAnalyzing(false);
+        }
+      } catch (error: any) {
+        console.error('轮询分析结果失败:', error);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 10000);
+        } else {
+          setAnalysisError('获取分析结果失败');
+          setIsAnalyzing(false);
+        }
+      }
+    };
+
+    poll();
+  };
+
   // 格式化时长
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -487,14 +531,11 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                     try {
                       if (onAnalyze) {
                         await onAnalyze(recording.id);
-                      }
-                      if (onGetAnalysis) {
-                        const result = await onGetAnalysis(recording.id);
-                        setAnalysisResult(result);
+                        // 分析已启动，开始轮询获取结果
+                        pollForAnalysisResult();
                       }
                     } catch (error: any) {
                       setAnalysisError(error?.message || '分析失败');
-                    } finally {
                       setIsAnalyzing(false);
                     }
                   }}
@@ -680,14 +721,11 @@ const CallRecordingDetail: React.FC<CallRecordingDetailProps> = ({ recording, re
                     try {
                       if (onAnalyze) {
                         await onAnalyze(recording.id);
-                      }
-                      if (onGetAnalysis) {
-                        const result = await onGetAnalysis(recording.id);
-                        setAnalysisResult(result);
+                        // 分析已启动，开始轮询获取结果
+                        pollForAnalysisResult();
                       }
                     } catch (error: any) {
                       setAnalysisError(error?.message || '分析失败');
-                    } finally {
                       setIsAnalyzing(false);
                     }
                   }}

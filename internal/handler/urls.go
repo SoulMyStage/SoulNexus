@@ -568,6 +568,10 @@ func (h *Handlers) registerKnowledgeRoutes(r *gin.RouterGroup) {
 		knowledge.GET("/get", models.AuthApiRequired, h.GetKnowledgeBase)
 		//上传文件到知识库（支持多 provider）
 		knowledge.POST("/upload", models.AuthRequired, h.UploadFileToKnowledgeBase)
+		//搜索/召回知识库文档
+		knowledge.GET("/search", models.AuthRequired, h.SearchKnowledgeBase)
+		//列出知识库中的所有内容（文档和段落）
+		knowledge.GET("/list", models.AuthRequired, h.ListKnowledgeBaseContent)
 	}
 }
 
