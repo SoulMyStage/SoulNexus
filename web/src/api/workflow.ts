@@ -295,6 +295,13 @@ export const workflowService = {
       }>
       total: number
     }>('/workflows/events/types')
+  },
+
+  /**
+   * 停止工作流实例
+   */
+  async stopInstance(instanceId: number): Promise<ApiResponse<{ instance_id: number; status: string }>> {
+    return post<{ instance_id: number; status: string }>(`/workflows/instances/${instanceId}/stop`)
   }
 }
 

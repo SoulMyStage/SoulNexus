@@ -123,7 +123,7 @@ func (w *WorkflowPluginNode) executeWorkflowPlugin(ctx *WorkflowContext, inputs 
 
 	// 设置子工作流的输入参数
 	if subWorkflow.Context == nil {
-		subWorkflow.Context = NewWorkflowContext(fmt.Sprintf("subworkflow-%d", w.Plugin.ID))
+		subWorkflow.Context = NewWorkflowContextWithDB(fmt.Sprintf("subworkflow-%d", w.Plugin.ID), ctx.db)
 	}
 
 	// 将输入参数传递给子工作流
@@ -378,7 +378,12 @@ func (w *WorkflowPluginNode) instantiateNode(base Node) (ExecutableNode, error) 
 	case NodeTypeAIChat:
 		aiChatNode := &AIChatNode{Node: &base}
 		if base.Properties != nil {
-			config, err := ParseAIChatConfig(base.Properties)
+			// 将map[string]string转换为map[string]interface{}
+			props := make(map[string]interface{})
+			for k, v := range base.Properties {
+				props[k] = v
+			}
+			config, err := ParseAIChatConfig(props)
 			if err != nil {
 				return nil, fmt.Errorf("parse AI chat config failed: %w", err)
 			}

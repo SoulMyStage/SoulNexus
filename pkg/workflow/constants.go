@@ -17,6 +17,7 @@ const (
 	NodeTypeScript         NodeType = "script"
 	NodeTypePlugin         NodeType = "plugin"
 	NodeTypeWorkflowPlugin NodeType = "workflow_plugin"
+	NodeTypeAIChat         NodeType = "ai_chat"
 )
 
 func (nt NodeType) String() string {

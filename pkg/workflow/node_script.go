@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/code-100-precent/LingEcho/pkg/workflow/libs"
 	"github.com/traefik/yaegi/interp"
@@ -37,13 +38,31 @@ func (s *ScriptNode) ExecuteScript(ctx *WorkflowContext, inputs map[string]inter
 	} else {
 		fmt.Printf("%s\n", message)
 	}
+
+	// 检查脚本是否为空
+	if strings.TrimSpace(s.Script) == "" {
+		errMsg := "Script is empty"
+		if ctx != nil {
+			ctx.AddLog("error", errMsg, s.ID, s.Name)
+		}
+		return nil, fmt.Errorf(errMsg)
+	}
+
 	runtime := s.Runtime
 	if runtime == nil {
 		runtime = defaultGoScriptRuntime
 	}
+
+	if ctx != nil {
+		ctx.AddLog("info", "Starting script runtime...", s.ID, s.Name)
+	}
+
 	result, err := runtime(ctx, s.Script, inputs)
 	if err != nil {
-		ctx.AddLog("error", fmt.Sprintf("Script execution failed: %s", err.Error()), s.ID, s.Name)
+		errMsg := fmt.Sprintf("Script execution failed: %s", err.Error())
+		if ctx != nil {
+			ctx.AddLog("error", errMsg, s.ID, s.Name)
+		}
 		return nil, err
 	}
 	if result == nil {
@@ -57,6 +76,8 @@ func (s *ScriptNode) ExecuteScript(ctx *WorkflowContext, inputs map[string]inter
 			ctx.AddLog("info", fmt.Sprintf("Output: %s", string(outputJSON)), s.ID, s.Name)
 		}
 		ctx.AddLog("success", "Script executed successfully", s.ID, s.Name)
+	} else if ctx != nil {
+		ctx.AddLog("success", "Script executed successfully (no output)", s.ID, s.Name)
 	}
 
 	return result, nil
@@ -69,13 +90,22 @@ func (s *ScriptNode) Base() *Node {
 func (s *ScriptNode) Run(ctx *WorkflowContext) ([]string, error) {
 	inputs, err := s.Node.PrepareInputs(ctx)
 	if err != nil {
+		if ctx != nil {
+			ctx.AddLog("error", fmt.Sprintf("Failed to prepare inputs: %v", err), s.ID, s.Name)
+		}
 		return nil, err
 	}
 	result, err := s.ExecuteScript(ctx, inputs)
 	if err != nil {
+		if ctx != nil {
+			ctx.AddLog("error", fmt.Sprintf("Script execution error: %v", err), s.ID, s.Name)
+		}
 		return nil, err
 	}
 	s.Node.PersistOutputs(ctx, result)
+	if ctx != nil {
+		ctx.AddLog("success", fmt.Sprintf("Script node completed, next nodes: %v", s.NextNodes), s.ID, s.Name)
+	}
 	return s.NextNodes, nil
 }
 
@@ -148,8 +178,13 @@ func defaultGoScriptRuntime(ctx *WorkflowContext, script string, inputs map[stri
 		// 恢复标准输出
 		os.Stdout = originalStdout
 		os.Stderr = originalStderr
-		// 等待读取完成
-		<-outputDone
+		// 等待读取完成（带超时）
+		select {
+		case <-outputDone:
+			// 读取完成
+		case <-time.After(1 * time.Second):
+			// 超时，继续
+		}
 		// 关闭读端
 		rOut.Close()
 		rErr.Close()
@@ -203,8 +238,12 @@ func defaultGoScriptRuntime(ctx *WorkflowContext, script string, inputs map[stri
 	result, err := runFunc(inputs)
 
 	// 确保所有缓冲的输出都被刷新
-	wOut.Sync()
-	wErr.Sync()
+	if originalStdout != nil {
+		originalStdout.Sync()
+	}
+	if originalStderr != nil {
+		originalStderr.Sync()
+	}
 	return result, err
 }
 

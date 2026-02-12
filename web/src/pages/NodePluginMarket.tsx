@@ -15,7 +15,14 @@ import {
   Calendar,
   Tag,
   Settings,
-  Workflow
+  Workflow,
+  Eye,
+  Edit,
+  Trash2,
+  Upload,
+  Save,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 
 import Button from '@/components/UI/Button'
@@ -392,45 +399,45 @@ const NodePluginMarket: React.FC = () => {
 
           {/* 操作按钮 */}
           <div className="flex gap-2 mt-auto">
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => handleViewPlugin(plugin)}
-              className="flex-1"
+              className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
             >
+              <Eye className="w-3 h-3" />
               查看
-            </Button>
+            </button>
             
             {/* 如果是当前用户的插件，显示编辑和删除按钮 */}
             {showMyPlugins && user && plugin.userId === user.id ? (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
+                <button
                   onClick={() => handleEditPlugin(plugin)}
-                  className="flex-1"
+                  className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
                 >
+                  <Edit className="w-3 h-3" />
                   编辑
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
+                </button>
+                <button
                   onClick={() => handleDeletePlugin(plugin)}
-                  className="flex-1"
+                  className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
                 >
+                  <Trash2 className="w-3 h-3" />
                   删除
-                </Button>
+                </button>
               </>
             ) : (
-              <Button
-                variant={isInstalled ? "secondary" : "primary"}
-                size="sm"
+              <button
                 onClick={() => !isInstalled && handleInstallPlugin(plugin)}
                 disabled={isInstalled}
-                className="flex-1"
+                className={`flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium rounded transition-colors ${
+                  isInstalled
+                    ? 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 cursor-not-allowed'
+                    : 'text-white bg-blue-600 hover:bg-blue-700'
+                }`}
               >
+                <Download className="w-4 h-4" />
                 {isInstalled ? '已安装' : '安装'}
-              </Button>
+              </button>
             )}
           </div>
         </Card>
@@ -452,7 +459,7 @@ const NodePluginMarket: React.FC = () => {
                 发现和安装强大的工作流插件，将现有工作流作为子流程复用
               </p>
             </div>
-            <Button
+            <button
               onClick={() => {
                 if (!isAuthenticated) {
                   showAlert('请先登录后再发布工作流', 'warning', '请先登录')
@@ -467,9 +474,11 @@ const NodePluginMarket: React.FC = () => {
                 }
               }}
               disabled={!isAuthenticated}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <Upload className="w-4 h-4" />
               {isAuthenticated ? '发布工作流' : '请先登录'}
-            </Button>
+            </button>
           </div>
         </div>
       </div>
@@ -515,16 +524,20 @@ const NodePluginMarket: React.FC = () => {
           </select>
 
           {/* 我的插件按钮 */}
-            <Button
-              variant={showMyPlugins ? "primary" : "outline"}
-              size="sm"
+            <button
               onClick={() => {
                 setShowMyPlugins(!showMyPlugins)
                 setCurrentPage(1) // 重置页码
               }}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                showMyPlugins
+                  ? 'text-white bg-blue-600 hover:bg-blue-700'
+                  : 'text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
             >
+              <Package className="w-4 h-4" />
               我的插件
-            </Button>
+            </button>
 
           {/* 视图模式 */}
           <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
@@ -691,13 +704,18 @@ const PluginDetailModal: React.FC<{
             </div>
           </div>
         </div>
-        <Button
-          variant={isInstalled ? "secondary" : "primary"}
+        <button
           onClick={onInstall}
           disabled={isInstalled}
+          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            isInstalled
+              ? 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 cursor-not-allowed'
+              : 'text-white bg-blue-600 hover:bg-blue-700'
+          }`}
         >
+          <Download className="w-4 h-4" />
           {isInstalled ? '已安装' : '安装'}
-        </Button>
+        </button>
       </div>
 
       {/* 插件描述 */}
@@ -830,7 +848,7 @@ const EditPluginModal: React.FC<{
   onSubmit: () => void
   onCancel: () => void
   loading: boolean
-}> = ({ plugin, formData, setFormData, onSubmit, onCancel, loading }) => {
+}> = ({formData, setFormData, onSubmit, onCancel, loading }) => {
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto">
       <div className="grid grid-cols-2 gap-4">
@@ -1138,21 +1156,21 @@ const EditPluginModal: React.FC<{
 
       {/* 操作按钮 */}
       <div className="flex justify-end gap-2 pt-4 border-t">
-        <Button
-          variant="outline"
+        <button
           onClick={onCancel}
           disabled={loading}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           取消
-        </Button>
-        <Button
-          variant="primary"
+        </button>
+        <button
           onClick={onSubmit}
-          loading={loading}
           disabled={loading || !formData.displayName || !formData.description}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
+          <Save className="w-4 h-4" />
           保存更改
-        </Button>
+        </button>
       </div>
     </div>
   )
@@ -1243,24 +1261,24 @@ const PublishWorkflowModal: React.FC<{
     try {
       const response = await workflowPluginService.getWorkflowPublishedPlugin(workflowId)
       if (response.code === 200 && response.data) {
-        setPublishedPlugin(response.data)
+        const pluginData = response.data
+        setPublishedPlugin(pluginData)
         setPublishMode('version')
         // 自动填充已发布的插件信息，但保留工作流的参数定义
         setFormData(prev => ({
           ...prev,
-          name: response.data.name,
-          displayName: response.data.displayName,
-          description: response.data.description || '',
-          category: response.data.category,
-          icon: response.data.icon || '',
-          color: response.data.color || '#6366f1',
-          tags: response.data.tags?.join(', ') || '',
-          author: response.data.author || '',
-          homepage: response.data.homepage || '',
-          repository: response.data.repository || '',
-          license: response.data.license || 'MIT',
-          version: incrementVersion(response.data.version || '1.0.0'),
-          // 保留工作流的参数，不用已发布插件的参数（因为可能是空的）
+          name: pluginData.name || '',
+          displayName: pluginData.displayName || '',
+          description: pluginData.description || '',
+          category: pluginData.category || 'utility',
+          icon: pluginData.icon || '',
+          color: pluginData.color || '#6366f1',
+          tags: pluginData.tags?.join(', ') || '',
+          author: pluginData.author || '',
+          homepage: pluginData.homepage || '',
+          repository: pluginData.repository || '',
+          license: pluginData.license || 'MIT',
+          version: incrementVersion(pluginData.version || '1.0.0'),
           inputSchema: prev.inputSchema,
           outputSchema: prev.outputSchema
         }))
@@ -1841,33 +1859,39 @@ const PublishWorkflowModal: React.FC<{
 
       {/* 操作按钮 */}
       <div className="flex justify-between mt-6 pt-4 border-t">
-        <Button
-          variant="outline"
+        <button
           onClick={currentStep === 1 ? onClose : () => setCurrentStep(currentStep - 1)}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
         >
-          {currentStep === 1 ? '取消' : '上一步'}
-        </Button>
+          {currentStep === 1 ? '取消' : (
+            <>
+              <ChevronLeft className="w-4 h-4" />
+              上一步
+            </>
+          )}
+        </button>
         
         <div className="flex gap-2">
           {currentStep < 3 && (
-            <Button
-              variant="primary"
+            <button
               onClick={() => setCurrentStep(currentStep + 1)}
               disabled={currentStep === 1 && !selectedWorkflow}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               下一步
-            </Button>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           )}
           
           {currentStep === 3 && (
-            <Button
-              variant="primary"
+            <button
               onClick={handleSubmit}
-              loading={loading}
               disabled={loading || !formData.name || !formData.displayName || !formData.description}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <Upload className="w-4 h-4" />
               {publishMode === 'new' ? '发布插件' : '更新插件'}
-            </Button>
+            </button>
           )}
         </div>
       </div>

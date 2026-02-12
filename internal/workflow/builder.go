@@ -354,6 +354,25 @@ func instantiateNode(base runtimewf.Node) (runtimewf.ExecutableNode, error) {
 			Parameters: parameters,
 		}
 		return workflowPluginNode, nil
+	case runtimewf.NodeTypeAIChat:
+		// AI对话节点
+		aiChatNode := &runtimewf.AIChatNode{Node: &base}
+		// Extract AI chat configuration from properties
+		if base.Properties != nil {
+			// Convert map[string]string to map[string]interface{}
+			properties := make(map[string]interface{})
+			for k, v := range base.Properties {
+				properties[k] = v
+			}
+			config, err := runtimewf.ParseAIChatConfig(properties)
+			if err != nil {
+				return nil, fmt.Errorf("parse AI chat config failed: %w", err)
+			}
+			aiChatNode.Config = config
+		} else {
+			return nil, fmt.Errorf("AI chat node requires properties")
+		}
+		return aiChatNode, nil
 	default:
 		return nil, fmt.Errorf("unsupported node type %s", base.Type)
 	}

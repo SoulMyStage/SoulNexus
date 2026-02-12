@@ -12,7 +12,9 @@ import {
   Globe,
   Calendar,
   Webhook,
-  Bot
+  Bot,
+  Edit,
+  Trash2
 } from 'lucide-react'
 import Button from '@/components/UI/Button'
 import Card from '@/components/UI/Card'
@@ -58,6 +60,8 @@ const WorkflowManager: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([])
   const [isTerminalVisible, setIsTerminalVisible] = useState(false)
+  const [currentInstanceId, setCurrentInstanceId] = useState<number | null>(null)
+  const [isRunning, setIsRunning] = useState(false)
   const [showTriggerConfig, setShowTriggerConfig] = useState(false)
   const [triggerConfig, setTriggerConfig] = useState<WorkflowDefinition['triggers']>({})
   const wsRef = useRef<WebSocket | null>(null)
@@ -553,11 +557,47 @@ const WorkflowManager: React.FC = () => {
                         if (node.outputs && node.outputs.length > 0) {
                           node.outputs.forEach((output) => {
                             if (output && output.trim()) {
-                              // 对于结束节点，输出参数名定义最终结果的字段名称
-                              // source 留空，系统会自动从上游节点获取数据
-                              outputMap[output] = output
+                              // 对于结束节点，尝试从上游节点获取对应的输出
+                              // 首先查找连接到结束节点的边
+                              const incomingEdge = workflow.connections.find(conn => conn.target === node.id)
+                              if (incomingEdge) {
+                                const sourceNode = workflow.nodes.find(n => n.id === incomingEdge.source)
+                                if (sourceNode && sourceNode.type === 'ai_chat') {
+                                  // 如果上游是 AI 对话节点，使用其 outputVariable
+                                  const outputVar = sourceNode.data.config?.outputVariable
+                                  if (outputVar) {
+                                    outputMap[output] = `${sourceNode.id}.${outputVar}`
+                                  } else {
+                                    outputMap[output] = output
+                                  }
+                                } else {
+                                  // 其他节点类型，使用默认逻辑
+                                  outputMap[output] = output
+                                }
+                              } else {
+                                // 没有找到上游节点，使用默认逻辑
+                                outputMap[output] = output
+                              }
                             }
                           })
+                        }
+                      } else if (node.type === 'ai_chat') {
+                        // AI对话节点：使用 inputVariable 和 outputVariable
+                        // inputVariable 是从上游节点获取数据的源
+                        // outputVariable 是保存 AI 响应的目标变量名
+                        const inputVar = node.data.config?.inputVariable
+                        const outputVar = node.data.config?.outputVariable
+                        
+                        // inputMap: 将输入参数别名映射到源
+                        // 对于 AI 对话节点，我们使用 inputVariable 作为别名
+                        if (inputVar) {
+                          inputMap[inputVar] = inputVar
+                        }
+                        
+                        // outputMap: 将输出参数别名映射到目标
+                        // 对于 AI 对话节点，我们使用 outputVariable 作为别名
+                        if (outputVar) {
+                          outputMap[outputVar] = `${node.id}.${outputVar}`
                         }
                       } else {
                         // 其他节点：处理输入和输出参数
@@ -617,8 +657,8 @@ const WorkflowManager: React.FC = () => {
                       
                       const sourceNode = workflow.nodes.find(n => n.id === conn.source)
                       if (sourceNode) {
-                        if (sourceNode.type === 'condition' || sourceNode.type === 'gateway') {
-                          // 对于 condition/gateway 节点，根据 sourceHandle 确定类型
+                        if (sourceNode.type === 'gateway') {
+                          // 对于 gateway 节点，根据 sourceHandle 确定类型
                           const outputIndex = sourceNode.outputs.findIndex(o => o === conn.sourceHandle)
                           if (outputIndex === 0) {
                             edgeType = 'true'
@@ -689,6 +729,32 @@ const WorkflowManager: React.FC = () => {
                   setSaving(false)
                 }
               }}
+              onStop={async (instanceId: number) => {
+                try {
+                  const response = await workflowService.stopInstance(instanceId)
+
+                  if (response.code === 200) {
+                    setIsRunning(false)
+                    setCurrentInstanceId(null)
+                    const now = new Date()
+                    const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`
+                    setTerminalLogs(prev => [...prev, {
+                      timestamp,
+                      level: 'warning',
+                      message: '工作流已被用户停止'
+                    }])
+                    showAlert('工作流已停止', 'success', '停止成功')
+                  } else {
+                    console.error('Failed to stop workflow:', response.msg)
+                    showAlert(response.msg || '停止工作流失败', 'error', '停止失败')
+                  }
+                } catch (error: any) {
+                  console.error('Error stopping workflow:', error)
+                  showAlert(error.msg || error.message || '停止工作流时发生错误', 'error', '停止失败')
+                }
+              }}
+              isRunning={isRunning}
+              currentInstanceId={currentInstanceId}
               onRun={async (workflow, parameters = {}) => {
                 if (!selectedWorkflow) {
                   showAlert('没有选中的工作流', 'error', '运行失败')
@@ -808,6 +874,10 @@ const WorkflowManager: React.FC = () => {
                       throw new Error('无法解析工作流执行结果')
                     }
                     
+                    // 设置当前运行的实例ID和运行状态
+                    setCurrentInstanceId(instance.id)
+                    setIsRunning(true)
+                    
                     // 添加后端返回的日志
                     if (logs && logs.length > 0) {
                       const convertedLogs: TerminalLog[] = logs.map(log => ({
@@ -833,6 +903,8 @@ const WorkflowManager: React.FC = () => {
                         message: `工作流执行完成，耗时: ${duration}`
                       }])
                       
+                      setIsRunning(false)
+                      setCurrentInstanceId(null)
                       showAlert(`工作流执行完成，耗时: ${duration}`, 'success', '运行成功')
                     } else if (instance && instance.status === 'failed') {
                       const failedTime = new Date()
@@ -843,8 +915,13 @@ const WorkflowManager: React.FC = () => {
                         message: instance.resultData?.error || '工作流执行失败'
                       }])
                       
+                      setIsRunning(false)
+                      setCurrentInstanceId(null)
                       showAlert(instance.resultData?.error || '工作流执行失败', 'error', '运行失败')
                     }
+                    
+                    // 返回实例信息供前端使用
+                    return { instance }
                   } else {
                     const errorTime = new Date()
                     const errorTimestamp = `${errorTime.getHours().toString().padStart(2, '0')}:${errorTime.getMinutes().toString().padStart(2, '0')}:${errorTime.getSeconds().toString().padStart(2, '0')}.${errorTime.getMilliseconds().toString().padStart(3, '0')}`
@@ -1629,26 +1706,26 @@ const WorkflowManager: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="xs"
+                      <button
                         onClick={(e) => {
                           e.stopPropagation()
                           handleEdit(workflow)
                         }}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
                       >
+                        <Edit className="w-3 h-3" />
                         编辑
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
+                      </button>
+                      <button
                         onClick={(e) => {
                           e.stopPropagation()
                           handleDelete(workflow.id)
                         }}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                       >
+                        <Trash2 className="w-3 h-3" />
                         删除
-                      </Button>
+                      </button>
               </div>
                   </div>
                 </Card>
@@ -1693,26 +1770,26 @@ const WorkflowManager: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 ml-4">
-                      <Button
-                        variant="ghost"
-                        size="xs"
+                      <button
                         onClick={(e) => {
                           e.stopPropagation()
                           handleEdit(workflow)
                         }}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
                       >
+                        <Edit className="w-3 h-3" />
                         编辑
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
+                      </button>
+                      <button
                         onClick={(e) => {
                           e.stopPropagation()
                           handleDelete(workflow.id)
                         }}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                       >
+                        <Trash2 className="w-3 h-3" />
                         删除
-                      </Button>
+                      </button>
                     </div>
                   </div>
           </motion.div>

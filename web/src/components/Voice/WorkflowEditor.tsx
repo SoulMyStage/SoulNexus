@@ -24,7 +24,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Package,
-  CheckCircle
+  CheckCircle,
+  Bot,
+  Save
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import Modal from '@/components/UI/Modal'
@@ -41,7 +43,7 @@ const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 // 节点类型定义（根据后端定义）
 export interface WorkflowNode {
   id: string
-  type: 'start' | 'end' | 'task' | 'gateway' | 'event' | 'subflow' | 'parallel' | 'wait' | 'timer' | 'script' | 'workflow_plugin'
+  type: 'start' | 'end' | 'task' | 'gateway' | 'event' | 'subflow' | 'parallel' | 'wait' | 'timer' | 'script' | 'workflow_plugin' | 'ai_chat'
   position: { x: number; y: number }
   data: {
     label: string
@@ -175,6 +177,15 @@ const getNodeTypes = (t: (key: string) => string) => ({
     shadowColor: 'shadow-purple-200',
     inputs: 1,
     outputs: 1
+  },
+  ai_chat: {
+    label: 'AI对话',
+    icon: <Bot className="w-5 h-5" />,
+    color: '#8b5cf6', // 深紫色
+    gradient: 'from-purple-500 to-purple-700',
+    shadowColor: 'shadow-purple-300',
+    inputs: 1,
+    outputs: 1
   }
 })
 
@@ -182,6 +193,9 @@ interface WorkflowEditorProps {
   workflow?: Workflow
   onSave?: (workflow: Workflow) => void
   onRun?: (workflow: Workflow, parameters?: Record<string, any>) => void
+  onStop?: (instanceId: number) => Promise<void>
+  isRunning?: boolean
+  currentInstanceId?: number | null
   workflowId?: number // 工作流ID，用于节点测试
   className?: string
 }
@@ -190,6 +204,9 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
   workflow,
   onSave,
   onRun,
+  onStop,
+  isRunning: propsIsRunning,
+  currentInstanceId,
   workflowId,
   className = ''
 }) => {
@@ -205,7 +222,6 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
   const [canvasOffset, setCanvasOffset] = useState({ x: 100000, y: 100000 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-  const [isRunning, setIsRunning] = useState(false)
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null)
   const [configuringNode, setConfiguringNode] = useState<string | null>(null)
   const [canvasScale, setCanvasScale] = useState(1)
@@ -362,6 +378,20 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
           pluginId: null,
           parameters: {}
         }
+      case 'ai_chat':
+        return {
+          provider: 'openai',
+          apiKey: '',
+          baseURL: 'https://api.openai.com/v1',
+          model: 'gpt-4',
+          systemPrompt: '',
+          inputVariable: 'user_input',
+          outputVariable: 'ai_response',
+          temperature: 0.7,
+          maxTokens: 2000,
+          enableStream: false,
+          persistHistory: false
+        }
       default:
         return {}
     }
@@ -387,9 +417,22 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
 
   // 更新节点配置
   const updateNodeConfig = useCallback((nodeId: string, config: any) => {
-    setNodes(prev => prev.map(node => 
-      node.id === nodeId ? { ...node, data: { ...node.data, config } } : node
-    ))
+    setNodes(prev => prev.map(node => {
+      if (node.id === nodeId) {
+        const updatedNode = { ...node, data: { ...node.data, config } }
+        
+        // 对于 AI 对话节点，根据 inputVariable 和 outputVariable 更新 inputs 和 outputs
+        if (node.type === 'ai_chat') {
+          const inputVar = config?.inputVariable
+          const outputVar = config?.outputVariable
+          updatedNode.inputs = inputVar ? [inputVar] : ['input-0']
+          updatedNode.outputs = outputVar ? [outputVar] : ['output-0']
+        }
+        
+        return updatedNode
+      }
+      return node
+    }))
   }, [])
 
   // 画布控制功能
@@ -647,7 +690,6 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
   // 执行运行
   const executeRun = useCallback(async (parameters: Record<string, any>) => {
     if (onRun) {
-      setIsRunning(true)
       setShowRunParamsModal(false)
       
       const currentWorkflow: Workflow = {
@@ -663,11 +705,27 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
       try {
         // 将参数传递给 onRun 回调
         await onRun(currentWorkflow, parameters)
-      } finally {
-        setIsRunning(false)
+      } catch (error) {
+        console.error('Error running workflow:', error)
       }
     }
   }, [workflow, nodes, connections, onRun])
+
+  // 停止工作流执行
+  const handleStop = useCallback(async () => {
+    if (!currentInstanceId || !onStop) {
+      console.warn('No running instance to stop or onStop callback not provided')
+      return
+    }
+
+    try {
+      console.log('Stopping workflow instance:', currentInstanceId)
+      await onStop(currentInstanceId)
+      console.log('Workflow stopped successfully')
+    } catch (error) {
+      console.error('Error stopping workflow:', error)
+    }
+  }, [currentInstanceId, onStop])
 
   // 渲染连接线 - 现代化贝塞尔曲线设计
   const renderConnections = () => {
@@ -1733,9 +1791,262 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                   </div>
                 )}
 
+                {node.type === 'ai_chat' && (
+                  <div className="space-y-4">
+                    {/* LLM提供者 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        LLM提供者 <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={node.data.config?.provider || 'openai'}
+                        onChange={(e) => {
+                          const newProvider = e.target.value
+                          // 重置配置以适应新提供者
+                          const defaultConfigs: Record<string, any> = {
+                            openai: {
+                              provider: 'openai',
+                              baseURL: 'https://api.openai.com/v1',
+                              model: 'gpt-4'
+                            },
+                            coze: {
+                              provider: 'coze',
+                              baseURL: 'https://api.coze.com',
+                              model: 'coze'
+                            },
+                            ollama: {
+                              provider: 'ollama',
+                              baseURL: 'http://localhost:11434',
+                              model: 'llama2'
+                            }
+                          }
+                          updateNodeConfig(node.id, { 
+                            ...(node.data.config || {}), 
+                            ...defaultConfigs[newProvider]
+                          })
+                        }}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      >
+                        <option value="openai">OpenAI (GPT-4, GPT-3.5等)</option>
+                        <option value="coze">Coze (字节跳动)</option>
+                        <option value="ollama">Ollama (本地模型)</option>
+                      </select>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        选择要使用的LLM提供者
+                      </p>
+                    </div>
+
+                    {/* API密钥 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        API密钥 <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={node.data.config?.apiKey || ''}
+                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), apiKey: e.target.value })}
+                        placeholder={
+                          node.data.config?.provider === 'openai' ? 'sk-...' :
+                          node.data.config?.provider === 'coze' ? 'pat-...' :
+                          'ollama'
+                        }
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {node.data.config?.provider === 'openai' && '从 https://platform.openai.com/api-keys 获取'}
+                        {node.data.config?.provider === 'coze' && '从 Coze 平台获取'}
+                        {node.data.config?.provider === 'ollama' && '通常为 "ollama"'}
+                      </p>
+                    </div>
+
+                    {/* 基础URL */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        基础URL <span className="text-gray-500 text-xs">(可选)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={node.data.config?.baseURL || ''}
+                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), baseURL: e.target.value })}
+                        placeholder={
+                          node.data.config?.provider === 'openai' ? 'https://api.openai.com/v1' :
+                          node.data.config?.provider === 'coze' ? 'https://api.coze.com' :
+                          'http://localhost:11434'
+                        }
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {node.data.config?.provider === 'ollama' && '本地Ollama服务地址'}
+                        {node.data.config?.provider !== 'ollama' && '通常使用默认值'}
+                      </p>
+                    </div>
+
+                    {/* 模型名称 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        模型名称 <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={node.data.config?.model || ''}
+                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), model: e.target.value })}
+                        placeholder={
+                          node.data.config?.provider === 'openai' ? 'gpt-4' :
+                          node.data.config?.provider === 'coze' ? 'coze' :
+                          'llama2'
+                        }
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {node.data.config?.provider === 'openai' && '可选: gpt-4, gpt-3.5-turbo, gpt-4-turbo等'}
+                        {node.data.config?.provider === 'coze' && '通常为 coze'}
+                        {node.data.config?.provider === 'ollama' && '本地模型名称，如 llama2, mistral等'}
+                      </p>
+                    </div>
+
+                    {/* 系统提示词 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        系统提示词 <span className="text-gray-500 text-xs">(可选)</span>
+                      </label>
+                      <textarea
+                        value={node.data.config?.systemPrompt || ''}
+                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), systemPrompt: e.target.value })}
+                        placeholder="输入系统提示词，用于指导AI的行为"
+                        rows={3}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        例如: "你是一个专业的技术顾问，请用简洁的语言解释技术概念"
+                      </p>
+                    </div>
+
+                    {/* 输入变量 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        输入变量 <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={node.data.config?.inputVariable || ''}
+                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), inputVariable: e.target.value })}
+                        placeholder="user_input"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        从工作流上下文中获取的变量名，用于传递用户输入
+                      </p>
+                    </div>
+
+                    {/* 输出变量 */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        输出变量 <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={node.data.config?.outputVariable || ''}
+                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), outputVariable: e.target.value })}
+                        placeholder="ai_response"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        AI响应将保存到此变量，供后续节点使用
+                      </p>
+                    </div>
+
+                    {/* 高级选项 */}
+                    <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                      <h5 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">高级选项</h5>
+                      
+                      {/* 温度 */}
+                      <div className="mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            温度 (0-2)
+                          </label>
+                          <span className="text-sm font-bold text-purple-600 dark:text-purple-400">
+                            {(node.data.config?.temperature ?? 0.7).toFixed(1)}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={node.data.config?.temperature ?? 0.7}
+                          onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), temperature: parseFloat(e.target.value) })}
+                          className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          较低值(0.3)更确定，较高值(1.5)更随机
+                        </p>
+                      </div>
+
+                      {/* 最大Token数 */}
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          最大Token数
+                        </label>
+                        <input
+                          type="number"
+                          value={node.data.config?.maxTokens ?? 2000}
+                          onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), maxTokens: parseInt(e.target.value) || 2000 })}
+                          min="1"
+                          max="4000"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          限制响应长度，降低API成本
+                        </p>
+                      </div>
+
+                      {/* 流式输出 */}
+                      <div className="flex items-center gap-3 mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                        <input
+                          type="checkbox"
+                          id={`enableStream-${node.id}`}
+                          checked={node.data.config?.enableStream || false}
+                          onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), enableStream: e.target.checked })}
+                          className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500 cursor-pointer"
+                        />
+                        <label htmlFor={`enableStream-${node.id}`} className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                          启用流式输出（实时接收响应）
+                        </label>
+                      </div>
+
+                      {/* 历史持久化 */}
+                      <div className="flex items-center gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                        <input
+                          type="checkbox"
+                          id={`persistHistory-${node.id}`}
+                          checked={node.data.config?.persistHistory || false}
+                          onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), persistHistory: e.target.checked })}
+                          className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500 cursor-pointer"
+                        />
+                        <label htmlFor={`persistHistory-${node.id}`} className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                          持久化对话历史（支持多轮对话）
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* 提示信息 */}
+                    <div className="p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
+                      <div className="text-xs text-purple-800 dark:text-purple-200 space-y-1">
+                        <div><strong>💡 提示：</strong></div>
+                        <div>• 支持 OpenAI、Coze、Ollama 等多种LLM提供者</div>
+                        <div>• 输入变量应该是工作流上下文中存在的变量</div>
+                        <div>• 输出变量将被保存到工作流上下文中供后续节点使用</div>
+                        <div>• 可以在 UserCredential 中预先配置凭证信息</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
 
-              {/* 输入输出参数配置 */}
+              {/* 输入输出参数配置 - 工作流插件节点不需要这个，它有自己的参数配置 */}
+              {node.type !== 'workflow_plugin' && (
               <div className="space-y-4">
                 <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
                   <div className="w-1 h-4 rounded-full" style={{ backgroundColor: nodeConfig.color || '#64748b' }} />
@@ -1888,7 +2199,7 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                 )}
 
                 {/* 其他节点：显示输入和输出参数 */}
-                {node.type !== 'start' && node.type !== 'end' && node.type !== 'gateway' && (
+                {node.type !== 'start' && node.type !== 'end' && node.type !== 'gateway' && node.type !== 'ai_chat' && (
                   <>
                     {/* 输入参数配置 */}
                     <div className="space-y-3">
@@ -2018,6 +2329,7 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                   </>
                 )}
               </div>
+              )}
               
               {/* 连接管理 */}
               <div className="space-y-4">
@@ -2272,15 +2584,13 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <Button
-              variant="primary"
-              size="sm"
+            <button
               onClick={() => setShowNodeDrawer(true)}
-              className="flex items-center gap-2"
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span>{t('workflow.editor.addNode')}</span>
-            </Button>
+            </button>
             <Button
               variant="ghost"
               size="icon"
@@ -2358,28 +2668,35 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
           
           {/* 主要操作按钮 */}
           <div className="flex items-center space-x-2">
-            <Button
-              variant="success"
-              size="sm"
-              onClick={handleRun}
-              disabled={!validation.valid || isRunning}
-              loading={isRunning}
-            >
-              {isRunning ? '运行中...' : '运行'}
-            </Button>
+            {(propsIsRunning || currentInstanceId) ? (
+              <button
+                onClick={handleStop}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+              >
+                <Square className="w-4 h-4" />
+                停止
+              </button>
+            ) : (
+              <button
+                onClick={handleRun}
+                disabled={!validation.valid}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Play className="w-4 h-4" />
+                运行
+              </button>
+            )}
             
-            <Button
-              variant="primary"
-              size="sm"
+            <button
               onClick={handleSave}
               disabled={!onSave}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <Save className="w-4 h-4" />
               保存
-            </Button>
+            </button>
             
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => {
                 if (workflowId && validation.valid) {
                   setShowPublishModal(true)
@@ -2389,9 +2706,11 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
               }}
               disabled={!workflowId || !validation.valid}
               title={!workflowId ? '需要工作流ID' : !validation.valid ? `工作流验证失败: ${validation.message}` : '发布为插件'}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <Package className="w-4 h-4" />
               发布为插件
-            </Button>
+            </button>
           </div>
         </div>
       </div>
@@ -3041,10 +3360,10 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                 })
                 executeRun(parsedParams)
               }}
-              disabled={isRunning}
-              loading={isRunning}
+              disabled={propsIsRunning}
+              loading={propsIsRunning}
             >
-              {isRunning ? '运行中...' : '运行'}
+              {propsIsRunning ? '运行中...' : '运行'}
             </Button>
           </div>
         </div>
@@ -3910,20 +4229,20 @@ const PublishWorkflowPluginModal: React.FC<{
 
           {/* 操作按钮 */}
           <div className="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <Button
-              variant="outline"
+            <button
               onClick={onClose}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 rounded-md transition-colors"
             >
               取消
-            </Button>
-            <Button
-              variant="primary"
+            </button>
+            <button
               onClick={() => setStep(2)}
               disabled={!isFormValid}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               下一步
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
@@ -3993,20 +4312,20 @@ const PublishWorkflowPluginModal: React.FC<{
 
           {/* 操作按钮 */}
           <div className="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <Button
-              variant="outline"
+            <button
               onClick={() => setStep(1)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 rounded-md transition-colors"
             >
-              <ChevronLeft className="w-4 h-4 mr-1" />
+              <ChevronLeft className="w-4 h-4" />
               上一步
-            </Button>
-            <Button
-              variant="primary"
+            </button>
+            <button
               onClick={() => setStep(3)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
             >
               下一步
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
@@ -4194,21 +4513,21 @@ const PublishWorkflowPluginModal: React.FC<{
 
           {/* 操作按钮 */}
           <div className="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <Button
-              variant="outline"
+            <button
               onClick={() => setStep(2)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 rounded-md transition-colors"
             >
-              <ChevronLeft className="w-4 h-4 mr-1" />
+              <ChevronLeft className="w-4 h-4" />
               上一步
-            </Button>
-            <Button
-              variant="primary"
+            </button>
+            <button
               onClick={handleSubmit}
-              loading={loading}
               disabled={loading}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <Package className="w-4 h-4" />
               {loading ? '发布中...' : '发布插件'}
-            </Button>
+            </button>
           </div>
         </div>
       )}

@@ -497,6 +497,7 @@ var allowedNodeTypes = map[string]struct{}{
 	"script":          {},
 	"plugin":          {},
 	"workflow_plugin": {},
+	"ai_chat":         {},
 }
 
 func validateWorkflowGraph(graph models.WorkflowGraph) error {
