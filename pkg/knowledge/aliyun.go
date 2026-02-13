@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"time"
 
@@ -104,6 +105,8 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 		options.Query = "Please give me information from this knowledge base"
 	}
 
+	log.Printf("DEBUG: Aliyun Search - IndexId: %s, Query: %s, TopK: %d", knowledgeKey, options.Query, options.TopK)
+
 	// Call Aliyun search API
 	headers := make(map[string]*string)
 	request := &bailian20231229.RetrieveRequest{
@@ -118,12 +121,25 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 	runtime := &teaUtil.RuntimeOptions{}
 	response, err := a.client.RetrieveWithOptions(tea.String(a.workspaceId), request, headers, runtime)
 	if err != nil {
+		log.Printf("ERROR: Aliyun Retrieve API failed - error: %v", err)
 		return nil, fmt.Errorf("failed to search knowledge base: %w", err)
 	}
 
 	// Check response result
-	if response.GetBody() == nil || response.GetBody().Data == nil {
-		// Return empty results instead of error for empty knowledge bases
+	if response == nil {
+		log.Printf("DEBUG: Aliyun response is nil")
+		return []SearchResult{}, nil
+	}
+
+	if response.GetBody() == nil {
+		log.Printf("DEBUG: Aliyun response body is nil")
+		return []SearchResult{}, nil
+	}
+
+	if response.GetBody().Data == nil {
+		log.Printf("DEBUG: Aliyun response data is nil, StatusCode: %v", response.GetStatusCode())
+		// Log the entire response for debugging
+		log.Printf("DEBUG: Full response: %+v", response)
 		return []SearchResult{}, nil
 	}
 
@@ -137,9 +153,12 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 
 	// Handle case where Data.Nodes is nil or empty
 	if response.GetBody().Data.GetNodes() == nil || len(response.GetBody().Data.GetNodes()) == 0 {
+		log.Printf("DEBUG: Aliyun response has no nodes")
 		// Empty knowledge base or no results found - this is normal
 		return []SearchResult{}, nil
 	}
+
+	log.Printf("DEBUG: Aliyun found %d nodes", len(response.GetBody().Data.GetNodes()))
 
 	for _, node := range response.GetBody().Data.GetNodes() {
 		// Limit results to maxResults
@@ -188,6 +207,7 @@ func (a *aliyunKnowledgeBase) Search(ctx context.Context, knowledgeKey string, o
 		results = append(results, result)
 	}
 
+	log.Printf("DEBUG: Aliyun Search returned %d results", len(results))
 	return results, nil
 }
 
@@ -262,20 +282,10 @@ func (a *aliyunKnowledgeBase) CreateIndex(ctx context.Context, name string, conf
 
 	jobId := *submitResponse.GetBody().Data.Id
 
-	// Wait for index job to complete (simplified handling here, should poll status in practice)
-	statusResponse, err := a.getIndexJobStatus(jobId, indexId)
+	// Wait for index job to complete
+	err = a.waitForIndexJobCompletion(jobId, indexId)
 	if err != nil {
-		return "", fmt.Errorf("failed to get index status: %w", err)
-	}
-
-	// 检查 statusResponse 是否为 nil
-	if statusResponse == nil {
-		return "", fmt.Errorf("index job status response is nil")
-	}
-
-	// 检查响应体是否为 nil
-	if statusResponse.GetBody() == nil {
-		return "", fmt.Errorf("index job status response body is nil")
+		return "", fmt.Errorf("failed to wait for index completion: %w", err)
 	}
 
 	return indexId, nil

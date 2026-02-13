@@ -17,6 +17,7 @@ export interface KnowledgeBase {
 // 创建知识库请求参数
 export interface CreateKnowledgeBaseRequest {
     knowledgeName: string
+    provider?: string
     file?: File
     groupId?: number | null // 组织ID，如果设置则创建为组织共享的知识库
 }
@@ -55,6 +56,9 @@ export const createKnowledgeBase = async (
 ): Promise<ApiResponse<KnowledgeBase>> => {
     const formData = new FormData()
     formData.append('knowledgeName', data.knowledgeName)
+    if (data.provider) {
+        formData.append('provider', data.provider)
+    }
     if (data.file) {
         formData.append('file', data.file)
     }

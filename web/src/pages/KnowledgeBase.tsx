@@ -53,6 +53,7 @@ const KnowledgeBase = () => {
     const [isCreating, setIsCreating] = useState(false);
     const [formData, setFormData] = useState({
         knowledgeName: '',
+        provider: 'aliyun',
         shareToGroup: false,
         selectedGroupId: null as number | null
     });
@@ -162,6 +163,7 @@ const KnowledgeBase = () => {
         setCurrentItem(null);
         setFormData({
             knowledgeName: '',
+            provider: 'aliyun',
             shareToGroup: false,
             selectedGroupId: null
         });
@@ -226,6 +228,7 @@ const KnowledgeBase = () => {
             setIsCreating(true);
             const response = await createKnowledgeBase({
                 knowledgeName: formData.knowledgeName,
+                provider: formData.provider,
                 file: undefined,
                 groupId: formData.shareToGroup && formData.selectedGroupId ? formData.selectedGroupId : null
             });
@@ -514,6 +517,7 @@ const KnowledgeBase = () => {
                     setIsCreateModalOpen(false)
                     setFormData({
                         knowledgeName: '',
+                        provider: 'aliyun',
                         shareToGroup: false,
                         selectedGroupId: null
                     })
@@ -533,6 +537,21 @@ const KnowledgeBase = () => {
                                 required
                                 maxLength={10}
                             />
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    知识库类型
+                                </label>
+                                <select
+                                    name="provider"
+                                    value={formData.provider}
+                                    onChange={handleInputChange}
+                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-neutral-700 dark:border-neutral-600"
+                                >
+                                    <option value="aliyun">阿里云百炼</option>
+                                    <option value="qdrant">Qdrant</option>
+                                </select>
+                            </div>
 
                         {groups.length > 0 && (
                             <div>
@@ -577,6 +596,7 @@ const KnowledgeBase = () => {
                                 setIsCreateModalOpen(false)
                                 setFormData({
                                     knowledgeName: '',
+                                    provider: 'aliyun',
                                     shareToGroup: false,
                                     selectedGroupId: null
                                 })

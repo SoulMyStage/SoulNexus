@@ -4,7 +4,6 @@ import { ArrowLeft, Upload, Search, FileText, ChevronDown, ChevronUp } from 'luc
 import { useParams, useNavigate } from 'react-router-dom';
 import { showAlert } from '@/utils/notification'
 import { useI18nStore } from '@/stores/i18nStore'
-import { useAuthStore } from '@/stores/authStore'
 import { listKnowledgeBaseContent, uploadKnowledgeBase } from '@/api/knowledge';
 import Button from '@/components/UI/Button'
 import Input from '@/components/UI/Input'
@@ -34,7 +33,6 @@ const KnowledgeBaseDetail = () => {
     const { t } = useI18nStore()
     const navigate = useNavigate()
     const { knowledgeKey } = useParams<{ knowledgeKey: string }>()
-    const { user } = useAuthStore()
     
     const [contentData, setContentData] = useState<ContentData | null>(null)
     const [isLoading, setIsLoading] = useState(true)

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ type Knowledge struct {
 	GroupID       *uint     `json:"group_id,omitempty" gorm:"column:group_id;index"` // Organization ID, if set indicates this is an organization-shared knowledge base
 	KnowledgeKey  string    `json:"knowledge_key" gorm:"column:knowledge_key"`
 	KnowledgeName string    `json:"knowledge_name" gorm:"column:knowledge_name"`
+	IndexId       string    `json:"index_id" gorm:"column:index_id"`                // Index ID for providers like Aliyun (may differ from knowledge_key)
 	Provider      string    `json:"provider" gorm:"column:provider;default:aliyun"` // Knowledge base provider type
 	Config        string    `json:"config" gorm:"column:config;type:text"`          // Configuration information (JSON format)
 	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at"`
@@ -52,6 +54,11 @@ type GetKnowledgeByUserRequest struct {
 
 // CreateKnowledge creates a knowledge base
 func CreateKnowledge(db *gorm.DB, userID int, knowledgeKey string, knowledgeName string, provider string, config map[string]interface{}, groupID *uint) (Knowledge, error) {
+	return CreateKnowledgeWithIndexId(db, userID, knowledgeKey, knowledgeName, provider, config, groupID, knowledgeKey)
+}
+
+// CreateKnowledgeWithIndexId creates a knowledge base with explicit indexId
+func CreateKnowledgeWithIndexId(db *gorm.DB, userID int, knowledgeKey string, knowledgeName string, provider string, config map[string]interface{}, groupID *uint, indexId string) (Knowledge, error) {
 	// Check if user exists
 	var user User
 	err := db.Model(&User{}).
@@ -97,6 +104,7 @@ func CreateKnowledge(db *gorm.DB, userID int, knowledgeKey string, knowledgeName
 		GroupID:       groupID,
 		KnowledgeKey:  knowledgeKey,
 		KnowledgeName: knowledgeName,
+		IndexId:       indexId,
 		Provider:      provider,
 		Config:        configJSON,
 		CreatedAt:     now,
@@ -261,11 +269,25 @@ func SearchKnowledgeBase(db *gorm.DB, knowledgeKey string, query string, topK in
 	}
 
 	// Execute search
+	ctx := context.Background()
+
+	// 为 Qdrant 生成 embedding
+	embedding := knowledge.GenerateEmbedding(query, 384)
+
+	// Use the correct key for search (IndexId for Aliyun, knowledgeKey for others)
+	searchKey := knowledgeKey
+	if k.Provider == knowledge.ProviderAliyun && k.IndexId != "" {
+		searchKey = k.IndexId
+	}
+
 	options := knowledge.SearchOptions{
 		Query: query,
 		TopK:  topK,
+		Filter: map[string]interface{}{
+			"embedding": embedding,
+		},
 	}
-	return kb.Search(nil, knowledgeKey, options)
+	return kb.Search(ctx, searchKey, options)
 }
 
 // GetStringOrDefault returns default value if string is empty
@@ -312,19 +334,34 @@ func GenerateKnowledgeKey(userID int, knowledgeName string) string {
 // GenerateKnowledgeName generates knowledge base name with length constraint for Aliyun (max 20 chars)
 func GenerateKnowledgeName(userID int, name string) string {
 	// 阿里云要求名称长度 1-20 个字符
-	// 使用 UUID 的前 8 位 + 用户名称的前几个字符
-	// 格式: kb_<8位UUID>
+	// 格式: {userID}_{name}_{sequence}
+	// 例如: 2_Git_1, 10_MyKB_1
 
-	// 生成短 UUID (使用时间戳的后 8 位)
-	timestamp := time.Now().UnixNano() % 100000000 // 8 位数字
+	// 截断名称，确保总长度不超过 20
+	// 最坏情况: 10_<name>_999 = 3 + len(name) + 4 = 7 + len(name)
+	// 所以 name 最多 13 个字符
+	maxNameLen := 13
 
-	// 截断用户输入的名称，确保总长度不超过 20
-	// 格式: kb_<timestamp>_<name>
-	// 例如: kb_12345678_知识库
-	maxNameLen := 20 - 12 // 留出 "kb_12345678_" 的长度
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen]
+	runes := []rune(name)
+	if len(runes) > maxNameLen {
+		runes = runes[:maxNameLen]
+	}
+	truncatedName := string(runes)
+
+	// 如果截断后的名称为空，使用默认名称
+	if truncatedName == "" {
+		truncatedName = "kb"
 	}
 
-	return fmt.Sprintf("kb_%08d_%s", timestamp, name)
+	// 使用时间戳的最后 3 位作为序列号（0-999）
+	sequence := time.Now().UnixNano() % 1000
+
+	result := fmt.Sprintf("%d_%s_%d", userID, truncatedName, sequence)
+
+	// 最后再检查一遍长度（以防万一）
+	if len(result) > 20 {
+		result = result[:20]
+	}
+
+	return result
 }

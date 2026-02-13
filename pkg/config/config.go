@@ -80,7 +80,6 @@ type LLMConfig struct {
 // KnowledgeBaseConfig knowledge base configuration
 type KnowledgeBaseConfig struct {
 	Enabled       bool                `env:"KNOWLEDGE_BASE_ENABLED"`
-	Provider      string              `env:"KNOWLEDGE_BASE_PROVIDER"`
 	Bailian       BailianConfig       `mapstructure:"bailian"`
 	Milvus        MilvusConfig        `mapstructure:"milvus"`
 	Qdrant        QdrantConfig        `mapstructure:"qdrant"`
@@ -316,8 +315,7 @@ func Load() error {
 				From:     getStringOrDefault("MAIL_FROM", ""),
 			},
 			KnowledgeBase: KnowledgeBaseConfig{
-				Enabled:  getBoolOrDefault("KNOWLEDGE_BASE_ENABLED", false),
-				Provider: getStringOrDefault("KNOWLEDGE_BASE_PROVIDER", "aliyun"),
+				Enabled: getBoolOrDefault("KNOWLEDGE_BASE_ENABLED", false),
 				Bailian: BailianConfig{
 					AccessKeyId:     getStringOrDefault("BAILIAN_ACCESS_KEY_ID", ""),
 					AccessKeySecret: getStringOrDefault("BAILIAN_ACCESS_KEY_SECRET", ""),
@@ -431,30 +429,35 @@ func (c *Config) Validate() error {
 
 	// Validate knowledge base configuration
 	if c.Services.KnowledgeBase.Enabled {
-		if c.Services.KnowledgeBase.Provider == "" {
-			return errors.New("knowledge base provider is required when enabled")
+		// Provider is now selected from frontend, so we don't validate it here
+		// But we still validate individual provider configurations if they are configured
+
+		// Validate Aliyun if configured
+		if c.Services.KnowledgeBase.Bailian.AccessKeyId != "" {
+			if c.Services.KnowledgeBase.Bailian.AccessKeySecret == "" {
+				return errors.New("bailian access key secret is required when access key ID is set")
+			}
 		}
 
-		switch c.Services.KnowledgeBase.Provider {
-		case "aliyun":
-			if c.Services.KnowledgeBase.Bailian.AccessKeyId == "" || c.Services.KnowledgeBase.Bailian.AccessKeySecret == "" {
-				return errors.New("bailian access key and secret are required")
-			}
-		case "milvus":
-			if c.Services.KnowledgeBase.Milvus.Address == "" {
-				return errors.New("milvus address is required")
-			}
-		case "qdrant":
-			if c.Services.KnowledgeBase.Qdrant.BaseURL == "" {
-				return errors.New("qdrant base URL is required")
-			}
-		case "elasticsearch":
-			if c.Services.KnowledgeBase.Elasticsearch.BaseURL == "" {
-				return errors.New("elasticsearch base URL is required")
-			}
-		case "pinecone":
-			if c.Services.KnowledgeBase.Pinecone.APIKey == "" || c.Services.KnowledgeBase.Pinecone.IndexName == "" {
-				return errors.New("pinecone API key and index name are required")
+		// Validate Milvus if configured
+		if c.Services.KnowledgeBase.Milvus.Address != "" {
+			// Milvus is configured, validation passed
+		}
+
+		// Validate Qdrant if configured
+		if c.Services.KnowledgeBase.Qdrant.BaseURL != "" {
+			// Qdrant is configured, validation passed
+		}
+
+		// Validate Elasticsearch if configured
+		if c.Services.KnowledgeBase.Elasticsearch.BaseURL != "" {
+			// Elasticsearch is configured, validation passed
+		}
+
+		// Validate Pinecone if configured
+		if c.Services.KnowledgeBase.Pinecone.APIKey != "" {
+			if c.Services.KnowledgeBase.Pinecone.IndexName == "" {
+				return errors.New("pinecone index name is required when API key is set")
 			}
 		}
 	}
