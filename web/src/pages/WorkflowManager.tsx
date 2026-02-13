@@ -439,7 +439,7 @@ const WorkflowManager: React.FC = () => {
                 nodes: selectedWorkflow.definition.nodes.map(n => {
                   // 节点类型直接使用后端定义的类型，不需要映射
                   // WorkflowEditor 现在支持所有后端节点类型
-                  const nodeType = n.type as 'start' | 'end' | 'task' | 'gateway' | 'event' | 'subflow' | 'parallel' | 'wait' | 'timer' | 'script'
+                  const nodeType = n.type as 'start' | 'end' | 'task' | 'gateway' | 'event' | 'subflow' | 'parallel' | 'wait' | 'timer' | 'script' | 'workflow_plugin' | 'ai_chat'
                   
                   // 根据节点类型生成输入输出
                   // 使用默认配置：start 0输入1输出，end 1输入0输出，其他1输入1输出，condition/gateway/parallel 1输入2输出
@@ -465,6 +465,10 @@ const WorkflowManager: React.FC = () => {
                   const inputKeys = Object.keys(n.inputMap || {})
                   const outputKeys = Object.keys(n.outputMap || {})
                   
+                  // 提取 pluginId 到顶层 data 对象（用于渲染时查找插件）
+                  const pluginIdStr = n.properties?.pluginId || n.properties?.['pluginId']
+                  const pluginId = pluginIdStr ? (typeof pluginIdStr === 'string' ? parseInt(pluginIdStr, 10) : pluginIdStr) : undefined
+                  
                   return {
                     id: n.id,
                     type: nodeType,
@@ -474,7 +478,9 @@ const WorkflowManager: React.FC = () => {
                       config: n.properties || {},
                       // 保存原始的 inputMap 和 outputMap，以便在保存时恢复
                       _inputMap: n.inputMap,
-                      _outputMap: n.outputMap
+                      _outputMap: n.outputMap,
+                      // 为 workflow_plugin 节点提取 pluginId
+                      ...(n.type === 'workflow_plugin' && pluginId ? { pluginId } : {})
                     },
                     inputs: inputKeys.length > 0 
                       ? inputKeys

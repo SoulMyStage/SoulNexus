@@ -12,15 +12,12 @@ import {
   Clock,
   Timer,
   Code,
-  HelpCircle,
   Plus,
   Search,
   X,
   Maximize2,
   Minimize2,
   TestTube,
-  ChevronDown,
-  ChevronUp,
   ChevronLeft,
   ChevronRight,
   Package,
@@ -250,12 +247,22 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
   // 组件挂载时加载插件
   useEffect(() => {
     loadInstalledPlugins()
-  }, [])
+  }, [loadInstalledPlugins])
+
+  // 当工作流数据改变时，同步节点和连接
+  useEffect(() => {
+    if (workflow?.nodes) {
+      setNodes(workflow.nodes)
+    }
+    if (workflow?.connections) {
+      setConnections(workflow.connections)
+    }
+  }, [workflow?.id, workflow?.nodes, workflow?.connections])
+
   const [showPublishModal, setShowPublishModal] = useState(false)
   const [showRunParamsModal, setShowRunParamsModal] = useState(false)
   const [runParameters, setRunParameters] = useState<Record<string, string>>({})
   const [availableEventTypes, setAvailableEventTypes] = useState<string[]>([])
-  const [showGatewayHelp, setShowGatewayHelp] = useState(false)
   const [showNodeTestModal, setShowNodeTestModal] = useState(false)
   const [testingNode, setTestingNode] = useState<string | null>(null)
   const [nodeTestParameters, setNodeTestParameters] = useState<Record<string, string>>({})
@@ -1416,6 +1423,18 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                     {/* 工作流插件信息显示 */}
                     {(() => {
                       const plugin = installedPlugins.find(p => p.pluginId === node.data.pluginId)
+                      
+                      if (loadingPlugins) {
+                        return (
+                          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                            <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
+                              <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"></div>
+                              <span className="text-sm font-medium">加载插件信息中...</span>
+                            </div>
+                          </div>
+                        )
+                      }
+                      
                       if (!plugin) {
                         return (
                           <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -1425,6 +1444,9 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                             </div>
                             <p className="text-xs text-red-600 dark:text-red-500 mt-1">
                               该节点关联的工作流插件可能已被卸载或不存在
+                            </p>
+                            <p className="text-xs text-red-600 dark:text-red-500 mt-2">
+                              插件ID: {node.data.pluginId}
                             </p>
                           </div>
                         )
@@ -1609,124 +1631,31 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                 
                 {node.type === 'gateway' && (
                   <div className="space-y-4">
-                    <div className="p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
-                      <div className="text-xs text-purple-800 dark:text-purple-200">
-                        <strong>条件判断节点：</strong>这是一个路由节点，根据条件值选择不同的执行路径。它不处理数据，只负责分支路由。
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        判断模式
-                      </label>
-                      <select
-                        value={node.data.config?.mode || 'value'}
-                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), mode: e.target.value })}
-                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="value">值判断（推荐）</option>
-                        <option value="expression">表达式评估（待实现）</option>
-                      </select>
-                    </div>
-
-                    {node.data.config?.mode === 'value' ? (
-                      <Input
-                        label="条件键或比较表达式（必填）"
-                        size="sm"
-                        value={node.data.config?.condition || ''}
-                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), condition: e.target.value })}
-                        placeholder="例如: parameters.input > 0 或 parameters.isVip"
-                        helperText="支持两种格式：1) 简单值判断：parameters.xxx（判断值是否为真）；2) 比较表达式：parameters.xxx > 0（支持 >, <, >=, <=, ==, !=）。例如：parameters.input > 0 表示判断 input 是否大于 0。"
-                      />
-                    ) : (
-                      <Input
-                        label="表达式（待实现）"
-                        size="sm"
-                        value={node.data.config?.expression || ''}
-                        onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), expression: e.target.value })}
-                        placeholder="例如: input.includes('订单')"
-                        helperText="表达式评估功能待实现，当前请使用值判断模式"
-                        disabled
-                      />
-                    )}
-
-                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <button
-                        type="button"
-                        onClick={() => setShowGatewayHelp(!showGatewayHelp)}
-                        className="w-full flex items-center justify-between text-xs text-blue-800 dark:text-blue-200 font-semibold hover:text-blue-900 dark:hover:text-blue-100 transition-colors"
-                      >
-                        <span className="flex items-center gap-2">
-                          <HelpCircle className="w-4 h-4" />
-                          使用说明
-                        </span>
-                        {showGatewayHelp ? (
-                          <ChevronUp className="w-4 h-4" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
-                      </button>
-                      {showGatewayHelp && (
-                        <div className="mt-3 text-xs text-blue-700 dark:text-blue-300 space-y-2">
-                          <div>
-                            <strong>1. 两个输出端口的含义：</strong>
-                            <ul className="ml-4 mt-1 space-y-1 list-disc">
-                              <li>第一个输出（上方）：条件为<strong>真</strong>时走这个分支</li>
-                              <li>第二个输出（下方）：条件为<strong>假</strong>时走这个分支</li>
-                            </ul>
-                          </div>
-                          <div>
-                            <strong>2. 分支标签的作用：</strong>
-                            <ul className="ml-4 mt-1 space-y-1 list-disc">
-                              <li>仅用于<strong>显示</strong>，让连接线更易读（如"是VIP"、"不是VIP"）</li>
-                              <li>不影响逻辑判断，可以不填</li>
-                            </ul>
-                          </div>
-                          <div>
-                            <strong>3. 判断逻辑：</strong>
-                            <ul className="ml-4 mt-1 space-y-1 list-disc">
-                              <li><strong>简单值判断：</strong>真值（true、非空字符串、非0数字），假值（false、0、空字符串""、null）</li>
-                              <li><strong>比较表达式：</strong>支持 <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>, <code>==</code>, <code>!=</code></li>
-                              <li>例如：<code>parameters.input &gt; 0</code> 表示判断 input 是否大于 0</li>
-                            </ul>
-                          </div>
-                          <div>
-                            <strong>4. 测试参数示例：</strong>
-                            <div className="mt-1 space-y-1">
-                              <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded text-xs font-mono">
-                                条件：<code>parameters.input &gt; 0</code>
-                                <br />
-                                参数：<code>{"{ \"input\": 666 }"}</code> → 结果：<strong>真</strong>（666 &gt; 0）
-                                <br />
-                                参数：<code>{"{ \"input\": -111 }"}</code> → 结果：<strong>假</strong>（-111 不大于 0）
-                              </div>
-                              <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded text-xs font-mono mt-1">
-                                条件：<code>parameters.isVip</code>
-                                <br />
-                                参数：<code>{"{ \"isVip\": true }"}</code> → 结果：<strong>真</strong>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    <Input
+                      label="条件表达式（必填）"
+                      size="sm"
+                      value={node.data.config?.condition || ''}
+                      onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), condition: e.target.value })}
+                      placeholder="例如：context.city == 'Beijing'"
+                      helperText="前一个节点的输出用 context.字段名 访问，如：context.city == 'Beijing' 或 context.age >= 18"
+                    />
 
                     <div className="grid grid-cols-2 gap-3">
                       <Input
-                        label="是分支标签（可选，仅用于显示）"
+                        label="真分支标签"
                         size="sm"
                         value={node.data.config?.trueLabel || ''}
                         onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), trueLabel: e.target.value })}
-                        placeholder="例如: 是VIP"
-                        helperText="条件为真时的分支标签，仅用于显示"
+                        placeholder="是"
+                        helperText="条件成立时的标签"
                       />
                       <Input
-                        label="否分支标签（可选，仅用于显示）"
+                        label="假分支标签"
                         size="sm"
                         value={node.data.config?.falseLabel || ''}
                         onChange={(e) => updateNodeConfig(node.id, { ...(node.data.config || {}), falseLabel: e.target.value })}
-                        placeholder="例如: 不是VIP"
-                        helperText="条件为假时的分支标签，仅用于显示"
+                        placeholder="否"
+                        helperText="条件不成立时的标签"
                       />
                     </div>
 
@@ -2192,8 +2121,16 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
                 {/* 条件判断节点：不需要输入输出参数，它是路由节点 */}
                 {node.type === 'gateway' && (
                   <div className="p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg">
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      <strong>说明：</strong>条件判断节点是路由节点，不需要定义输入输出参数。它从上下文中读取条件值，然后根据判断结果选择下一个节点。数据会自动从上游节点传递到下游节点。
+                    <div className="text-xs text-gray-600 dark:text-gray-400 space-y-2">
+                      <div>
+                        <strong>✓ 路由节点特性：</strong>
+                      </div>
+                      <div className="ml-3 space-y-1">
+                        <div>• 不处理数据，只负责分支路由</div>
+                        <div>• 不需要定义输入输出参数</div>
+                        <div>• 从上下文中读取条件值进行判断</div>
+                        <div>• 数据自动从上游传递到下游</div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2597,7 +2534,7 @@ func Run(inputs map[string]interface{}) (map[string]interface{}, error) {
               onClick={() => setShowHelpModal(true)}
               title={t('workflow.editor.help')}
             >
-              <HelpCircle className="w-5 h-5" />
+              <FileText className="w-5 h-5" />
             </Button>
           </div>
         </div>

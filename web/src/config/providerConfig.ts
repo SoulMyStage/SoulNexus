@@ -826,6 +826,231 @@ export const ASR_PROVIDERS: Record<string, ProviderConfig> = {
         required: true
       }
     ]
+  },
+  deepgram: {
+    name: 'Deepgram',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        type: 'password',
+        placeholder: '请输入 Deepgram API Key',
+        required: true,
+        description: 'Deepgram API Key'
+      },
+      {
+        key: 'model',
+        label: '模型',
+        type: 'text',
+        placeholder: 'nova-2',
+        required: false,
+        description: '识别模型，默认为 nova-2'
+      },
+      {
+        key: 'language',
+        label: '语言',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'zh', label: '中文' },
+          { value: 'en', label: '英文' },
+          { value: 'ja', label: '日文' },
+          { value: 'ko', label: '韩文' }
+        ],
+        description: '识别语言'
+      }
+    ]
+  },
+  aws: {
+    name: 'Amazon AWS',
+    fields: [
+      {
+        key: 'accessKeyId',
+        label: 'Access Key ID',
+        type: 'password',
+        placeholder: '请输入 Access Key ID',
+        required: true,
+        description: 'AWS Access Key ID'
+      },
+      {
+        key: 'secretAccessKey',
+        label: 'Secret Access Key',
+        type: 'password',
+        placeholder: '请输入 Secret Access Key',
+        required: true,
+        description: 'AWS Secret Access Key'
+      },
+      {
+        key: 'region',
+        label: 'Region',
+        type: 'text',
+        placeholder: 'us-east-1',
+        required: false,
+        description: 'AWS 区域，默认为 us-east-1'
+      },
+      {
+        key: 'language',
+        label: '语言',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'zh-CN', label: '中文' },
+          { value: 'en-US', label: '英文' },
+          { value: 'ja-JP', label: '日文' },
+          { value: 'ko-KR', label: '韩文' }
+        ]
+      }
+    ]
+  },
+  voiceapi: {
+    name: 'VoiceAPI',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        type: 'password',
+        placeholder: '请输入 VoiceAPI Key',
+        required: true,
+        description: 'VoiceAPI 密钥'
+      }
+    ]
+  },
+  whisper: {
+    name: 'OpenAI Whisper',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        type: 'password',
+        placeholder: '请输入 OpenAI API Key',
+        required: true,
+        description: 'OpenAI API Key'
+      },
+      {
+        key: 'baseUrl',
+        label: 'Base URL',
+        type: 'text',
+        placeholder: 'https://api.openai.com/v1',
+        required: false,
+        description: 'API 基础地址，默认为 https://api.openai.com/v1'
+      },
+      {
+        key: 'model',
+        label: '模型',
+        type: 'text',
+        placeholder: 'whisper-1',
+        required: false,
+        description: '模型名称，默认为 whisper-1'
+      }
+    ]
+  },
+  volcengine: {
+    name: '火山引擎',
+    fields: [
+      {
+        key: 'appId',
+        label: 'App ID',
+        type: 'text',
+        placeholder: '请输入火山引擎 App ID',
+        required: true,
+        description: '火山引擎应用 ID'
+      },
+      {
+        key: 'token',
+        label: 'Access Token',
+        type: 'password',
+        placeholder: '请输入 Access Token',
+        required: true,
+        description: '火山引擎 Access Token'
+      },
+      {
+        key: 'cluster',
+        label: 'Cluster',
+        type: 'text',
+        placeholder: 'volcengine_asr',
+        required: false,
+        description: '集群名称，默认为 volcengine_asr'
+      },
+      {
+        key: 'format',
+        label: '音频格式',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'pcm', label: 'PCM' },
+          { value: 'wav', label: 'WAV' },
+          { value: 'mp3', label: 'MP3' }
+        ],
+        description: '音频格式'
+      }
+    ]
+  },
+  google: {
+    name: 'Google Cloud Speech',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        type: 'password',
+        placeholder: '请输入 Google API Key',
+        required: true,
+        description: 'Google Cloud API Key'
+      },
+      {
+        key: 'encoding',
+        label: '音频编码',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'LINEAR16', label: 'LINEAR16' },
+          { value: 'FLAC', label: 'FLAC' },
+          { value: 'MULAW', label: 'MULAW' },
+          { value: 'AMR', label: 'AMR' }
+        ],
+        description: '音频编码格式'
+      },
+      {
+        key: 'sampleRate',
+        label: '采样率',
+        type: 'number',
+        placeholder: '16000',
+        required: false,
+        description: '音频采样率，默认为 16000'
+      },
+      {
+        key: 'languageCode',
+        label: '语言代码',
+        type: 'text',
+        placeholder: 'zh-CN',
+        required: false,
+        description: '语言代码，如 zh-CN、en-US 等'
+      }
+    ]
+  },
+  local: {
+    name: '本地 ASR',
+    fields: [
+      {
+        key: 'modelPath',
+        label: '模型路径',
+        type: 'text',
+        placeholder: '/path/to/model',
+        required: true,
+        description: '本地 ASR 模型文件路径'
+      },
+      {
+        key: 'language',
+        label: '语言',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'zh', label: '中文' },
+          { value: 'en', label: '英文' },
+          { value: 'ja', label: '日文' },
+          { value: 'ko', label: '韩文' }
+        ]
+      }
+    ]
   }
 }
 
