@@ -30,6 +30,8 @@ export const common: Record<Language, Record<string, string>> = {
     'nav.sidebar.overview': '数据概览',
     'nav.sidebar.currentOrganization': '当前组织',
     'nav.sidebar.selectOrganization': '选择组织',
+    'nav.sidebar.mcpManagement': 'MCP 管理',
+    'nav.sidebar.mcpMarketplace': 'MCP 广场',
 
     // 主题
     'theme.toggle': '切换主题',
@@ -112,6 +114,8 @@ export const common: Record<Language, Record<string, string>> = {
     'nav.sidebar.overview': 'Overview',
     'nav.sidebar.currentOrganization': 'Current Organization',
     'nav.sidebar.selectOrganization': 'Select Organization',
+    'nav.sidebar.mcpManagement': 'MCP Management',
+    'nav.sidebar.mcpMarketplace': 'MCP Marketplace',
 
     // Theme
     'theme.toggle': 'Toggle Theme',
@@ -194,6 +198,8 @@ export const common: Record<Language, Record<string, string>> = {
     'nav.sidebar.overview': '概要',
     'nav.sidebar.currentOrganization': '現在の組織',
     'nav.sidebar.selectOrganization': '組織を選択',
+    'nav.sidebar.mcpManagement': 'MCP管理',
+    'nav.sidebar.mcpMarketplace': 'MCPマーケットプレイス',
 
     // テーマ
     'theme.toggle': 'テーマ切り替え',

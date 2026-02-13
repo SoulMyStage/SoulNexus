@@ -25,6 +25,9 @@ func (s *SeedService) SeedAll() error {
 	if err := s.seedAssistants(); err != nil {
 		return err
 	}
+	if err := s.seedMCPMarketplace(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -210,5 +213,146 @@ func (s *SeedService) seedAssistants() error {
 			return err
 		}
 	}
+	return nil
+}
+
+func (s *SeedService) seedMCPMarketplace() error {
+	var count int64
+	if err := s.db.Model(&models.MCPMarketplaceItem{}).Count(&count).Error; err != nil {
+		return err
+	}
+	if count != 0 {
+		return nil // Data already exists, skip
+	}
+
+	// Seed categories first
+	categories := []models.MCPCategory{
+		{
+			Name:        "Database",
+			Description: "Database query and management tools",
+			Order:       1,
+		},
+		{
+			Name:        "File System",
+			Description: "File operations and management tools",
+			Order:       2,
+		},
+		{
+			Name:        "Network",
+			Description: "Network and HTTP request tools",
+			Order:       3,
+		},
+		{
+			Name:        "Utilities",
+			Description: "Utility and helper tools",
+			Order:       4,
+		},
+		{
+			Name:        "System",
+			Description: "System information and management tools",
+			Order:       5,
+		},
+	}
+
+	for i := range categories {
+		if err := s.db.Create(&categories[i]).Error; err != nil {
+			return err
+		}
+	}
+
+	// Seed marketplace items
+	items := []models.MCPMarketplaceItem{
+		{
+			Name:          "Database Query MCP",
+			Description:   "Provides database query tools, supports SQL queries, data export and other functions",
+			Version:       "1.0.0",
+			Author:        "SoulNexus Team",
+			Repository:    "https://github.com/soulmcp/mcp-database",
+			Documentation: "https://docs.soulmcp.com/mcp-database",
+			Category:      "Database",
+			Tags:          []byte(`["database", "query", "sql"]`),
+			Downloads:     1250,
+			Rating:        4.8,
+			Status:        "published",
+			IsFeatured:    true,
+		},
+		{
+			Name:          "File Operations MCP",
+			Description:   "Provides file operation tools, supports read, write, list, delete and other operations",
+			Version:       "1.0.0",
+			Author:        "SoulNexus Team",
+			Repository:    "https://github.com/soulmcp/mcp-file",
+			Documentation: "https://docs.soulmcp.com/mcp-file",
+			Category:      "File System",
+			Tags:          []byte(`["file", "filesystem", "io"]`),
+			Downloads:     980,
+			Rating:        4.6,
+			Status:        "published",
+			IsFeatured:    true,
+		},
+		{
+			Name:          "HTTP API MCP",
+			Description:   "Provides HTTP request tools, supports GET, POST, PUT, DELETE and other methods",
+			Version:       "1.0.0",
+			Author:        "SoulNexus Team",
+			Repository:    "https://github.com/soulmcp/mcp-http",
+			Documentation: "https://docs.soulmcp.com/mcp-http",
+			Category:      "Network",
+			Tags:          []byte(`["http", "api", "rest"]`),
+			Downloads:     750,
+			Rating:        4.5,
+			Status:        "published",
+			IsFeatured:    true,
+		},
+		{
+			Name:          "System Information MCP",
+			Description:   "Provides system information tools, supports OS info, CPU, memory and other metrics",
+			Version:       "1.0.0",
+			Author:        "SoulNexus Team",
+			Repository:    "https://github.com/soulmcp/mcp-system",
+			Documentation: "https://docs.soulmcp.com/mcp-system",
+			Category:      "System",
+			Tags:          []byte(`["system", "info", "metrics"]`),
+			Downloads:     650,
+			Rating:        4.7,
+			Status:        "published",
+			IsFeatured:    true,
+		},
+		{
+			Name:          "Utility Tools MCP",
+			Description:   "Provides utility tools, supports hash, encode, decode, validate and other functions",
+			Version:       "1.0.0",
+			Author:        "SoulNexus Team",
+			Repository:    "https://github.com/soulmcp/mcp-utils",
+			Documentation: "https://docs.soulmcp.com/mcp-utils",
+			Category:      "Utilities",
+			Tags:          []byte(`["utility", "hash", "encode"]`),
+			Downloads:     520,
+			Rating:        4.4,
+			Status:        "published",
+			IsFeatured:    false,
+		},
+		{
+			Name:          "Network Tools MCP",
+			Description:   "Provides network tools, supports ping, DNS lookup, traceroute and other functions",
+			Version:       "1.0.0",
+			Author:        "SoulNexus Team",
+			Repository:    "https://github.com/soulmcp/mcp-network",
+			Documentation: "https://docs.soulmcp.com/mcp-network",
+			Category:      "Network",
+			Tags:          []byte(`["network", "ping", "dns"]`),
+			Downloads:     380,
+			Rating:        4.3,
+			Status:        "published",
+			IsFeatured:    false,
+		},
+	}
+
+	for i := range items {
+		if err := s.db.Create(&items[i]).Error; err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

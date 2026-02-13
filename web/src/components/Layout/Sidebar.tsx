@@ -24,6 +24,7 @@ import {
   Info, // 关于我们图标
   Package, // 插件市场图标
   Mic, // 声纹识别图标
+  Store, // MCP 广场图标
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useI18nStore } from '@/stores/i18nStore'
@@ -108,6 +109,8 @@ const Sidebar = () => {
     { name: t('nav.sidebar.smartAssistant'), href: '/voice-assistant', icon: Bot },
     { name: t('nav.sidebar.voiceTraining'), href: '/voice-training', icon: Settings },
     ...(systemInfo?.features?.voiceprintEnabled ? [{ name: t('voiceprint.title'), href: '/voiceprint-management', icon: Mic }] : []),
+    { name: t('nav.sidebar.mcpManagement'), href: '/mcp-management', icon: Package },
+    { name: t('nav.sidebar.mcpMarketplace'), href: '/mcp-marketplace', icon: Store },
     { name: t('nav.sidebar.knowledgeBase'), href: '/knowledge', icon: Library },
     { name: t('nav.sidebar.workflow'), href: '/workflows', icon: GitBranch },
     { name: t('nav.sidebar.pluginMarket'), href: '/node-plugins', icon: Package },
@@ -124,7 +127,7 @@ const Sidebar = () => {
 
   const publicNavs = [t('nav.docs'), t('nav.about')]
   // 受保护页面名称
-  const privateNavs = [t('nav.sidebar.overview'), t('nav.sidebar.smartAssistant'), t('nav.sidebar.voiceTraining'), t('voiceprint.title'), t('nav.sidebar.knowledgeBase'), t('nav.sidebar.workflow'), t('nav.sidebar.pluginMarket'), t('nav.sidebar.notification'), t('nav.sidebar.alerts'), t('nav.sidebar.jsTemplate'), t('nav.sidebar.billing'), t('nav.sidebar.groups'), t('nav.sidebar.deviceManagement'), t('nav.sidebar.callCenter')]
+  const privateNavs = [t('nav.sidebar.overview'), t('nav.sidebar.smartAssistant'), t('nav.sidebar.voiceTraining'), t('voiceprint.title'), t('nav.sidebar.knowledgeBase'), t('nav.sidebar.workflow'), t('nav.sidebar.pluginMarket'), t('nav.sidebar.notification'), t('nav.sidebar.alerts'), t('nav.sidebar.jsTemplate'), t('nav.sidebar.billing'), t('nav.sidebar.groups'), t('nav.sidebar.deviceManagement'), t('nav.sidebar.callCenter'), t('nav.sidebar.mcpManagement'), t('nav.sidebar.mcpMarketplace')]
 
   const isActive = (path: string) => location.pathname === path
 

@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # SoulNexus 主服务
+  soulmexus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soulmexus
+    ports:
+      - "7072:7072"
+    environment:
+      - APP_ENV=development
+      - DATABASE_DRIVER=mysql
+      - DATABASE_DSN=root:password@tcp(mysql:3306)/soulmexus?charset=utf8mb4&parseTime=True&loc=Local
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7072/api/system/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # SoulMCP HTTP 服务
+  soulmcp:
+    build:
+      context: ./SoulMCP
+      dockerfile: Dockerfile.http
+    container_name: soulmcp
+    ports:
+      - "8000:8000"
+    environment:
+      - SERVER_NAME=SoulMCP
+      - SERVER_VERSION=1.0.0
+      - SERVER_MODE=production
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - LOG_OUTPUT=stdout
+    volumes:
+      - ./SoulMCP/logs:/root/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: soulmexus-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=soulmexus
+      - MYSQL_USER=soulmexus
+      - MYSQL_PASSWORD=soulmexus
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: soulmexus-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  default:
+    name: soulmexus-network

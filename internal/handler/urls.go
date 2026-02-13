@@ -7,6 +7,7 @@ import (
 	"github.com/code-100-precent/LingEcho"
 	"github.com/code-100-precent/LingEcho/internal/apidocs"
 	"github.com/code-100-precent/LingEcho/internal/models"
+	"github.com/code-100-precent/LingEcho/internal/service"
 	"github.com/code-100-precent/LingEcho/pkg/config"
 	"github.com/code-100-precent/LingEcho/pkg/constants"
 	"github.com/code-100-precent/LingEcho/pkg/logger"
@@ -207,6 +208,8 @@ func (h *Handlers) Register(engine *gin.Engine) {
 	h.registerNodePluginRoutes(r)     // Add node plugin routes
 	h.registerVoicemailRoutes(r)      // Add voicemail routes
 	h.registerPhoneNumberRoutes(r)    // Add phone number routes
+	h.registerMCPRoutes(r)            // Add MCP routes
+	h.registerMCPMarketplaceRoutes(r) // Add MCP marketplace routes
 	// Register public workflow routes (no auth required)
 	h.RegisterPublicWorkflowRoutes(r)
 	objs := h.GetObjs()
@@ -837,5 +840,56 @@ func (h *Handlers) registerPhoneNumberRoutes(r *gin.RouterGroup) {
 		callForward.POST("/:id/verify", callForwardHandler.VerifyStatus)                        // 验证状态
 		callForward.POST("/:id/test", callForwardHandler.TestCallForward)                       // 测试呼叫转移
 		callForward.GET("/carrier-codes", callForwardHandler.GetCarrierCodes)                   // 获取运营商代码
+	}
+}
+
+// registerMCPRoutes MCP Server Management Module
+func (h *Handlers) registerMCPRoutes(r *gin.RouterGroup) {
+	mcpManager := service.NewMCPManager(h.db)
+	mcpHandler := NewMCPHandler(mcpManager)
+
+	mcp := r.Group("mcp")
+	mcp.Use(models.AuthRequired)
+	{
+		// MCP Server Management
+		mcp.GET("/servers", mcpHandler.ListMCPServers)
+		mcp.GET("/servers/:id", mcpHandler.GetMCPServer)
+		mcp.POST("/servers", mcpHandler.CreateMCPServer)
+		mcp.PATCH("/servers/:id", mcpHandler.UpdateMCPServer)
+		mcp.DELETE("/servers/:id", mcpHandler.DeleteMCPServer)
+		mcp.POST("/servers/:id/enable", mcpHandler.EnableMCPServer)
+		mcp.POST("/servers/:id/disable", mcpHandler.DisableMCPServer)
+
+		// MCP Tools
+		mcp.GET("/servers/:id/tools", mcpHandler.GetMCPTools)
+		mcp.POST("/servers/:id/call-tool", mcpHandler.CallMCPTool)
+
+		// MCP Logs
+		mcp.GET("/servers/:id/logs", mcpHandler.GetMCPLogs)
+	}
+}
+
+// registerMCPMarketplaceRoutes MCP Marketplace Module
+func (h *Handlers) registerMCPMarketplaceRoutes(r *gin.RouterGroup) {
+	marketplaceService := service.NewMCPMarketplaceService(h.db)
+	marketplaceHandler := NewMCPMarketplaceHandler(marketplaceService)
+
+	marketplace := r.Group("mcp/marketplace")
+	{
+		// Public routes (no auth required for browsing)
+		marketplace.GET("", marketplaceHandler.ListMarketplace)
+		marketplace.GET("/:id", marketplaceHandler.GetMarketplaceItem)
+		marketplace.GET("/categories", marketplaceHandler.GetCategories)
+		marketplace.GET("/featured", marketplaceHandler.GetFeaturedMCPs)
+		marketplace.GET("/trending", marketplaceHandler.GetTrendingMCPs)
+		marketplace.GET("/search/tag/:tag", marketplaceHandler.SearchByTag)
+		marketplace.GET("/:id/reviews", marketplaceHandler.GetMCPReviews)
+
+		// Protected routes (require authentication)
+		marketplace.POST("/:id/install", models.AuthRequired, marketplaceHandler.InstallMCP)
+		marketplace.DELETE("/installations/:id", models.AuthRequired, marketplaceHandler.UninstallMCP)
+		marketplace.GET("/my-installations", models.AuthRequired, marketplaceHandler.GetUserInstalledMCPs)
+		marketplace.PATCH("/installations/:id/config", models.AuthRequired, marketplaceHandler.UpdateInstallationConfig)
+		marketplace.POST("/:id/reviews", models.AuthRequired, marketplaceHandler.ReviewMCP)
 	}
 }

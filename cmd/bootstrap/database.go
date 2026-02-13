@@ -219,5 +219,12 @@ func RunMigrations(db *gorm.DB) error {
 		&models.SipCall{},
 		&models.DeviceErrorLog{},
 		&models.CallRecording{},
+		&models.MCPServer{},
+		&models.MCPTool{},
+		&models.MCPCallLog{},
+		&models.MCPMarketplaceItem{},
+		&models.MCPUserInstallation{},
+		&models.MCPReview{},
+		&models.MCPCategory{},
 	})
 }

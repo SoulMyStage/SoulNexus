@@ -49,6 +49,8 @@ import PhoneNumberManager from '@/pages/PhoneNumberManager.tsx';
 import VoicemailBox from '@/pages/VoicemailBox.tsx';
 import VoicemailDetail from '@/pages/VoicemailDetail.tsx';
 import VoiceprintManagement from '@/pages/VoiceprintManagement.tsx';
+import MCPManagement from '@/pages/MCPManagement.tsx';
+import MCPMarketplace from '@/pages/MCPMarketplace.tsx';
 
 function App() {
     const [showPerformanceMonitor, setShowPerformanceMonitor] = useState(false);
@@ -325,6 +327,20 @@ function App() {
                             <ProtectedRoute>
                                 <Layout>
                                     <VoiceprintManagement />
+                                </Layout>
+                            </ProtectedRoute>
+                        } />
+                        <Route path="/mcp-management" element={
+                            <ProtectedRoute>
+                                <Layout>
+                                    <MCPManagement />
+                                </Layout>
+                            </ProtectedRoute>
+                        } />
+                        <Route path="/mcp-marketplace" element={
+                            <ProtectedRoute>
+                                <Layout>
+                                    <MCPMarketplace />
                                 </Layout>
                             </ProtectedRoute>
                         } />
