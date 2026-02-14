@@ -70,6 +70,9 @@ func (s *HardwareSession) handleListenMessage(msg map[string]interface{}) {
 	if s.voiceprintTool != nil {
 		s.voiceprintTool.ClearIdentification()
 		s.logger.Info("[Session] 已清除之前的声纹识别结果")
+		// 标记新句子开始，清空当前句子的音频缓冲区
+		s.voiceprintTool.StartNewSentence()
+		s.logger.Info("[Session] 已标记新句子开始")
 	}
 	s.mu.Lock()
 	s.currentSpeakerID = ""
@@ -186,7 +189,14 @@ func (s *HardwareSession) handleHelloMessage(msg map[string]interface{}) {
 	pipeline.SetPCMAudioCallback(func(data []byte) error {
 		s.mu.RLock()
 		recorder := s.recorder
+		voiceprintTool := s.voiceprintTool
 		s.mu.RUnlock()
+
+		// 添加 PCM 音频到声纹识别工具
+		if voiceprintTool != nil {
+			voiceprintTool.AddAudioFrame(data)
+		}
+
 		if recorder != nil {
 			return recorder.WriteAudio(data)
 		}
@@ -397,7 +407,6 @@ func (s *HardwareSession) handleAudio(data []byte) error {
 	s.mu.RLock()
 	active := s.active
 	pipeline := s.asrPipeline
-	voiceprintTool := s.voiceprintTool
 	s.mu.RUnlock()
 	if !active {
 		err := fmt.Errorf("[Session] 会话未激活")
@@ -414,11 +423,6 @@ func (s *HardwareSession) handleAudio(data []byte) error {
 	if len(data) == 0 {
 		s.logSessionError("AUDIO", "WARN", "EMPTY_AUDIO_DATA", "接收到空音频数据", "", "Received empty audio data")
 		return fmt.Errorf("empty audio data")
-	}
-
-	if voiceprintTool != nil {
-		voiceprintTool.AddAudioFrame(data)
-		s.logger.Debug("[Session] 声纹识别已处理音频帧")
 	}
 
 	err := pipeline.ProcessInput(s.ctx, data)

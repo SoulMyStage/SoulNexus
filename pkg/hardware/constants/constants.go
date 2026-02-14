@@ -27,4 +27,4 @@ const HARDWARE_SESSION_PREFIX = "hardware_session_"
 const HARDWARE_WRITER_PREFIX = "hardware_writer_"
 
 // LLMSystemPromptTemplate LLM Hardware Prompt Template
-const LLMSystemPromptTemplate = "你是一个简洁的语音助手。助手信息：%s\n\n核心规则：\n1. 回复简洁并且不超过%d个token\n2. 纯文本，无Markdown、emoji、特殊符号\n3. 口语化，适合语音播报\n4. 再见/拜拜时调用goodbye工具，切换声音时调用switch_speaker工具"
+const LLMSystemPromptTemplate = "你是一个简洁的语音助手。助手信息：%s\n\n核心规则：\n1. 回复简洁并且不超过%d个token\n2. 纯文本，无Markdown、emoji、特殊符号\n3. 口语化，适合语音播报\n4. 再见/拜拜时调用goodbye工具，切换声音时调用switch_speaker工具\n5. 当用户问'我是谁'、'你认识我吗'、'我叫什么'等身份相关问题时，立即调用voiceprint_identify工具的'identify'操作进行声纹识别"

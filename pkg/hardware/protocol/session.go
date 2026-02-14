@@ -16,6 +16,7 @@ import (
 	"github.com/code-100-precent/LingEcho/pkg/hardware/tools"
 	"github.com/code-100-precent/LingEcho/pkg/logger"
 	"github.com/code-100-precent/LingEcho/pkg/synthesizer"
+	"github.com/code-100-precent/LingEcho/pkg/voiceclone"
 	"github.com/code-100-precent/LingEcho/pkg/voiceprint"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -39,6 +40,7 @@ type HardwareSessionOption struct {
 	VoiceprintService    *voiceprint.Service
 	DeviceID             *string // 设备ID
 	MacAddress           string  // MAC地址
+	VoiceCloneID         *int    // 克隆音色ID（可选）
 }
 
 // HardwareSession hardware session
@@ -101,7 +103,80 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 	if _, exists := ttsConfig["voiceType"]; !exists {
 		ttsConfig["voiceType"] = hardwareConfig.Speaker
 	}
-	ttsService, err := synthesizer.NewSynthesisServiceFromCredential(ttsConfig)
+
+	var ttsService synthesizer.SynthesisService
+
+	// 如果指定了克隆音色ID，优先使用克隆音色
+	if hardwareConfig.VoiceCloneID != nil && *hardwareConfig.VoiceCloneID > 0 {
+		// 从数据库获取克隆音色信息
+		voiceClone, voiceCloneErr := models.GetVoiceCloneByID(hardwareConfig.DB, int64(*hardwareConfig.VoiceCloneID))
+		if voiceCloneErr == nil && voiceClone != nil {
+			// 创建克隆音色服务
+			cloneFactory := voiceclone.NewFactory()
+			cloneConfig := &voiceclone.Config{
+				Provider: voiceclone.Provider(voiceClone.Provider),
+				Options:  make(map[string]interface{}),
+			}
+
+			// 根据提供商类型和凭证设置配置
+			if voiceClone.Provider == "xunfei" {
+				// 从凭证中获取讯飞配置
+				if hardwareConfig.Credential.AsrConfig != nil {
+					if appID, ok := hardwareConfig.Credential.AsrConfig["appId"].(string); ok {
+						cloneConfig.Options["app_id"] = appID
+					}
+				}
+				// 从凭证中获取 API Key
+				cloneConfig.Options["api_key"] = hardwareConfig.Credential.LLMApiKey
+				// 从环境变量获取 WebSocket 配置（这些是全局配置）
+				if wsAppID := os.Getenv("XUNFEI_WS_APP_ID"); wsAppID != "" {
+					cloneConfig.Options["ws_app_id"] = wsAppID
+				}
+				if wsAPIKey := os.Getenv("XUNFEI_WS_API_KEY"); wsAPIKey != "" {
+					cloneConfig.Options["ws_api_key"] = wsAPIKey
+				}
+				if wsAPISecret := os.Getenv("XUNFEI_WS_API_SECRET"); wsAPISecret != "" {
+					cloneConfig.Options["ws_api_secret"] = wsAPISecret
+				}
+			} else if voiceClone.Provider == "volcengine" {
+				// 从凭证中获取火山引擎配置
+				if hardwareConfig.Credential.TtsConfig != nil {
+					if appID, ok := hardwareConfig.Credential.TtsConfig["appId"].(string); ok {
+						cloneConfig.Options["app_id"] = appID
+					}
+				}
+				// 从凭证中获取 Token
+				cloneConfig.Options["token"] = hardwareConfig.Credential.LLMApiKey
+			}
+
+			cloneService, cloneErr := cloneFactory.CreateService(cloneConfig)
+			if cloneErr == nil && cloneService != nil {
+				// 使用克隆音色服务
+				ttsService = voiceclone.NewVoiceCloneSynthesisService(cloneService, voiceClone.AssetID)
+				hardwareConfig.Logger.Info("[Session] 使用克隆音色进行TTS合成",
+					zap.Int("voiceCloneID", *hardwareConfig.VoiceCloneID),
+					zap.String("provider", voiceClone.Provider),
+					zap.String("assetID", voiceClone.AssetID))
+			} else {
+				// 克隆音色创建失败，降级到普通TTS
+				hardwareConfig.Logger.Warn("[Session] 克隆音色服务创建失败，降级到普通TTS",
+					zap.Int("voiceCloneID", *hardwareConfig.VoiceCloneID),
+					zap.String("provider", voiceClone.Provider),
+					zap.Error(cloneErr))
+				ttsService, err = synthesizer.NewSynthesisServiceFromCredential(ttsConfig)
+			}
+		} else {
+			// 克隆音色不存在，降级到普通TTS
+			hardwareConfig.Logger.Warn("[Session] 克隆音色不存在，降级到普通TTS",
+				zap.Int("voiceCloneID", *hardwareConfig.VoiceCloneID),
+				zap.Error(voiceCloneErr))
+			ttsService, err = synthesizer.NewSynthesisServiceFromCredential(ttsConfig)
+		}
+	} else {
+		// 没有指定克隆音色，使用普通TTS
+		ttsService, err = synthesizer.NewSynthesisServiceFromCredential(ttsConfig)
+	}
+
 	if err != nil {
 		logger.Fatal("创建 TTS 服务失败", zap.Error(err))
 	}
@@ -207,6 +282,8 @@ func NewHardwareSession(ctx context.Context, hardwareConfig *HardwareSessionOpti
 			assistantIDStr,
 			hardwareConfig.Logger,
 		)
+		// 注册声纹识别工具给 LLM，使其可以主动调用
+		tools.RegisterVoiceprintIdentifyTool(llmService, session.voiceprintTool)
 	}
 	sessionRef = session
 	go session.preloadCommonSpeakers(ttsConfig)

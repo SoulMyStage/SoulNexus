@@ -32,6 +32,7 @@ type HardwareOptions struct {
 	EnableVAD            bool                   // enable VAD
 	VADThreshold         float64                // VAD threshold
 	VADConsecutiveFrames int                    // VAD consecutive frames
+	VoiceCloneID         *int                   // voice clone id (optional)
 }
 
 // HardwareHandler hardware handler
@@ -87,6 +88,7 @@ func (h *HardwareHandler) HandlerHardwareWebsocket(
 		VoiceprintService:    voiceprintService,
 		DeviceID:             options.DeviceID,
 		MacAddress:           options.MacAddress,
+		VoiceCloneID:         options.VoiceCloneID,
 	})
 	if err := session.Start(); err != nil {
 		h.logger.Error("[Handler] start session failed: ", zap.Error(err))

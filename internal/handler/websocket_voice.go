@@ -317,5 +317,6 @@ func (h *Handlers) HandleHardwareWebSocketVoice(c *gin.Context) {
 		EnableVAD:            assistant.EnableVAD,
 		VADThreshold:         vadThreshold,
 		VADConsecutiveFrames: vadConsecutiveFrames,
+		VoiceCloneID:         assistant.VoiceCloneID,
 	})
 }
