@@ -785,7 +785,18 @@ func (h *Handlers) GetVoiceOptions(c *gin.Context) {
 	if normalizedProvider == "qcloud" {
 		normalizedProvider = "tencent"
 	}
-	// 火山引擎等其他 provider 名称保持不变
+
+	// 特殊处理 FishSpeech - 从 API 动态获取发音人列表
+	if normalizedProvider == "fishspeech" {
+		h.getFishSpeechVoices(c)
+		return
+	}
+
+	// 特殊处理 Fish Audio - 从 API 动态获取发音人列表
+	if normalizedProvider == "fishaudio" {
+		h.getFishAudioVoices(c)
+		return
+	}
 
 	// 从JSON文件读取音色列表
 	voices, err := loadVoiceOptionsFromJSON(normalizedProvider)
@@ -1021,6 +1032,130 @@ func getDefaultLanguageOptions(provider string) []LanguageOption {
 			{Code: "en-US", Name: "English", NativeName: "English", ConfigKey: "language", Description: "英语（美式）"},
 		}
 	}
+}
+
+// getFishSpeechVoices 从 FishSpeech API 获取音色列表
+func (h *Handlers) getFishSpeechVoices(c *gin.Context) {
+	user := models.CurrentUser(c)
+	if user == nil {
+		response.Fail(c, "未授权", "用户未登录")
+		return
+	}
+
+	// 从查询参数获取 API Key（优先级最高）
+	apiKey := c.Query("apiKey")
+
+	// 如果没有从查询参数获取，尝试从 user_credential 中获取
+	if apiKey == "" {
+		credentials, err := models.GetUserCredentials(h.db, user.ID)
+		if err != nil {
+			logrus.WithError(err).Errorf("获取用户凭证失败")
+			response.Fail(c, "获取用户凭证失败", nil)
+			return
+		}
+
+		// 查找 FishSpeech 的 TTS 配置
+		for _, cred := range credentials {
+			if cred.TtsConfig != nil {
+				if provider, ok := cred.TtsConfig["provider"].(string); ok && provider == "fishspeech" {
+					if key, ok := cred.TtsConfig["apiKey"].(string); ok && key != "" {
+						apiKey = key
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if apiKey == "" {
+		response.Fail(c, "缺少 FishSpeech API Key", "请在用户凭证中配置 FishSpeech API Key")
+		return
+	}
+
+	// 调用 FishSpeech API 获取音色列表
+	voices, err := synthesizer.GetFishSpeechVoices(apiKey)
+	if err != nil {
+		logrus.WithError(err).Errorf("获取 FishSpeech 音色列表失败")
+		response.Fail(c, fmt.Sprintf("获取 FishSpeech 音色列表失败: %v", err), nil)
+		return
+	}
+
+	// 将 FishSpeech 音色转换为 VoiceOption 格式
+	voiceOptions := make([]VoiceOption, len(voices))
+	for i, voice := range voices {
+		voiceOptions[i] = VoiceOption{
+			ID:          voice.ModelID,
+			Name:        voice.Title,
+			Description: voice.Description,
+		}
+	}
+
+	response.Success(c, "获取 FishSpeech 音色列表成功", gin.H{
+		"provider": "fishspeech",
+		"voices":   voiceOptions,
+	})
+}
+
+// getFishAudioVoices 获取 Fish Audio 音色列表
+func (h *Handlers) getFishAudioVoices(c *gin.Context) {
+	user := models.CurrentUser(c)
+	if user == nil {
+		response.Fail(c, "未授权", "用户未登录")
+		return
+	}
+
+	// 从查询参数获取 API Key（优先级最高）
+	apiKey := c.Query("apiKey")
+
+	// 如果没有从查询参数获取，尝试从 user_credential 中获取
+	if apiKey == "" {
+		credentials, err := models.GetUserCredentials(h.db, user.ID)
+		if err != nil {
+			logrus.WithError(err).Errorf("获取用户凭证失败")
+			response.Fail(c, "获取用户凭证失败", nil)
+			return
+		}
+
+		// 查找 Fish Audio 的 TTS 配置
+		for _, cred := range credentials {
+			if cred.TtsConfig != nil {
+				if provider, ok := cred.TtsConfig["provider"].(string); ok && provider == "fishaudio" {
+					if key, ok := cred.TtsConfig["apiKey"].(string); ok && key != "" {
+						apiKey = key
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if apiKey == "" {
+		response.Fail(c, "缺少 Fish Audio API Key", "请在用户凭证中配置 Fish Audio API Key")
+		return
+	}
+
+	// 调用 Fish Audio API 获取音色列表
+	voices, err := synthesizer.GetFishAudioVoices(apiKey)
+	if err != nil {
+		logrus.WithError(err).Errorf("获取 Fish Audio 音色列表失败")
+		response.Fail(c, fmt.Sprintf("获取 Fish Audio 音色列表失败: %v", err), nil)
+		return
+	}
+
+	// 将 Fish Audio 音色转换为 VoiceOption 格式
+	voiceOptions := make([]VoiceOption, len(voices))
+	for i, voice := range voices {
+		voiceOptions[i] = VoiceOption{
+			ID:          voice.ID,
+			Name:        voice.Title,
+			Description: voice.Description,
+		}
+	}
+
+	response.Success(c, "获取 Fish Audio 音色列表成功", gin.H{
+		"provider": "fishaudio",
+		"voices":   voiceOptions,
+	})
 }
 
 // DeleteVoiceClone 删除音色

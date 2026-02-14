@@ -42,13 +42,14 @@ const AddAssistantModal: React.FC<AddAssistantModalProps> = ({
     try {
       const res = await getGroupList()
       // 只显示用户是创建者或管理员的组织
-      const adminGroups = res.data.filter(g => {
+      const adminGroups = (res.data || []).filter(g => {
         const userId = user?.id ? Number(user.id) : null
         return g.creatorId === userId || g.myRole === 'admin'
       })
       setGroups(adminGroups)
     } catch (err) {
       console.error('获取组织列表失败', err)
+      setGroups([])
     }
   }
 

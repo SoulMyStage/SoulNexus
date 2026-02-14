@@ -14,6 +14,7 @@ const (
 	TTS_LOCAL             = "tts.local"
 	TTS_LOCAL_GOSPEECH    = "tts.local_gospeech"
 	TTS_FISHSPEECH        = "tts.fishspeech"
+	TTS_FISHAUDIO         = "tts.fishaudio"
 	TTS_COQUI             = "tts.coqui"
 	TTS_VOLCENGINE        = "tts.volcengine"
 	TTS_VOLCENGINE_CLONE  = "tts.volcengine_clone"
@@ -52,6 +53,8 @@ const (
 	ProviderLocalGoSpeech TTSProvider = "local_gospeech"
 	// ProviderFishSpeech FishSpeech TTS
 	ProviderFishSpeech TTSProvider = "fishspeech"
+	// ProviderFishAudio Fish Audio TTS
+	ProviderFishAudio TTSProvider = "fishaudio"
 	// ProviderCoqui Coqui TTS
 	ProviderCoqui TTSProvider = "coqui"
 	// ProviderVolcengine 火山引擎标准TTS

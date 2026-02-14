@@ -520,6 +520,9 @@ func NewSynthesisService(name string, options map[string]any) (SynthesisService,
 	case TTS_FISHSPEECH:
 		opt := media.CastOption[FishSpeechConfig](options)
 		return NewFishSpeechService(opt), nil
+	case TTS_FISHAUDIO:
+		opt := media.CastOption[FishAudioConfig](options)
+		return NewFishAudioService(opt), nil
 	case TTS_COQUI:
 		opt := media.CastOption[CoquiTTSOption](options)
 		return NewCoquiService(opt), nil
@@ -1194,6 +1197,92 @@ func NewSynthesisServiceFromCredential(config TTSCredentialConfig) (SynthesisSer
 		options = make(map[string]any)
 		if err := json.Unmarshal(configBytes, &options); err != nil {
 			return nil, fmt.Errorf("反序列化FishSpeech配置失败: %w", err)
+		}
+
+	case "fishaudio":
+		apiKey := config.getString("apiKey")
+		if apiKey == "" {
+			apiKey = config.getString("api_key") // 兼容下划线格式
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("Fish Audio TTS配置不完整：缺少apiKey")
+		}
+		providerName = TTS_FISHAUDIO
+		referenceID := config.getString("referenceId")
+		if referenceID == "" {
+			referenceID = config.getString("reference_id") // 兼容下划线格式
+		}
+		model := config.getString("model")
+		if model == "" {
+			model = "s1" // 默认值
+		}
+		format := config.getString("format")
+		if format == "" {
+			format = "mp3" // 默认值
+		}
+		sampleRate := config.getInt64("sampleRate")
+		if sampleRate == 0 {
+			sampleRate = config.getInt64("sample_rate") // 兼容下划线格式
+		}
+		if sampleRate == 0 {
+			if format == "opus" {
+				sampleRate = 48000
+			} else {
+				sampleRate = 44100 // 默认值
+			}
+		}
+		temperature := 0.7
+		if tempStr := config.getString("temperature"); tempStr != "" {
+			if f, err := strconv.ParseFloat(tempStr, 64); err == nil {
+				temperature = f
+			}
+		}
+		topP := 0.7
+		if topPStr := config.getString("topP"); topPStr != "" {
+			if f, err := strconv.ParseFloat(topPStr, 64); err == nil {
+				topP = f
+			}
+		}
+		latency := config.getString("latency")
+		if latency == "" {
+			latency = "normal" // 默认值
+		}
+		chunkLength := config.getInt64("chunkLength")
+		if chunkLength == 0 {
+			chunkLength = config.getInt64("chunk_length") // 兼容下划线格式
+		}
+		if chunkLength == 0 {
+			chunkLength = 300 // 默认值
+		}
+		normalize := true
+		if normStr := config.getString("normalize"); normStr != "" {
+			normalize = normStr == "true" || normStr == "1"
+		}
+		mp3Bitrate := config.getInt64("mp3Bitrate")
+		if mp3Bitrate == 0 {
+			mp3Bitrate = config.getInt64("mp3_bitrate") // 兼容下划线格式
+		}
+		if mp3Bitrate == 0 {
+			mp3Bitrate = 128 // 默认值
+		}
+		fishaudioConfig := NewFishAudioConfig(apiKey, referenceID)
+		fishaudioConfig.Model = model
+		fishaudioConfig.Format = format
+		fishaudioConfig.SampleRate = int(sampleRate)
+		fishaudioConfig.Temperature = temperature
+		fishaudioConfig.TopP = topP
+		fishaudioConfig.Latency = latency
+		fishaudioConfig.ChunkLength = int(chunkLength)
+		fishaudioConfig.Normalize = normalize
+		fishaudioConfig.MPEGBitrate = int(mp3Bitrate)
+		// 将配置对象转换为 map[string]any
+		configBytes, err := json.Marshal(fishaudioConfig)
+		if err != nil {
+			return nil, fmt.Errorf("序列化Fish Audio配置失败: %w", err)
+		}
+		options = make(map[string]any)
+		if err := json.Unmarshal(configBytes, &options); err != nil {
+			return nil, fmt.Errorf("反序列化Fish Audio配置失败: %w", err)
 		}
 
 	case "coqui":

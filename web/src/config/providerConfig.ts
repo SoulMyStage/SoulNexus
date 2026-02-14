@@ -598,6 +598,111 @@ export const TTS_PROVIDERS: Record<string, ProviderConfig> = {
       }
     ]
   },
+  fishaudio: {
+    name: 'Fish Audio',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        type: 'password',
+        placeholder: '请输入 Fish Audio API Key',
+        required: true,
+        description: 'Fish Audio API Key'
+      },
+      {
+        key: 'model',
+        label: '模型版本',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 's1', label: 's1' },
+          { value: 'speech-1.6', label: 'speech-1.6' },
+          { value: 'speech-1.5', label: 'speech-1.5' }
+        ],
+        description: '模型版本，默认为 s1'
+      },
+      {
+        key: 'format',
+        label: '输出格式',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'mp3', label: 'MP3' },
+          { value: 'wav', label: 'WAV' },
+          { value: 'pcm', label: 'PCM' },
+          { value: 'opus', label: 'Opus' }
+        ],
+        description: '输出音频格式，默认为 mp3'
+      },
+      {
+        key: 'sampleRate',
+        label: '采样率',
+        type: 'number',
+        placeholder: '44100',
+        required: false,
+        description: '音频采样率，默认为 44100（opus 格式为 48000）'
+      },
+      {
+        key: 'temperature',
+        label: '表现力',
+        type: 'number',
+        placeholder: '0.7',
+        required: false,
+        description: '表现力控制 (0-1)，值越高越多样化，默认为 0.7'
+      },
+      {
+        key: 'topP',
+        label: '多样性',
+        type: 'number',
+        placeholder: '0.7',
+        required: false,
+        description: '多样性控制 (0-1)，默认为 0.7'
+      },
+      {
+        key: 'latency',
+        label: '延迟模式',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'low', label: '低延迟' },
+          { value: 'normal', label: '普通' },
+          { value: 'balanced', label: '平衡' }
+        ],
+        description: '延迟模式，默认为 normal'
+      },
+      {
+        key: 'chunkLength',
+        label: '文本分段大小',
+        type: 'number',
+        placeholder: '300',
+        required: false,
+        description: '文本分段大小 (100-300)，默认为 300'
+      },
+      {
+        key: 'normalize',
+        label: '规范化文本',
+        type: 'select',
+        required: false,
+        options: [
+          { value: 'true', label: '是' },
+          { value: 'false', label: '否' }
+        ],
+        description: '是否规范化文本，默认为 true'
+      },
+      {
+        key: 'mp3Bitrate',
+        label: 'MP3 比特率',
+        type: 'select',
+        required: false,
+        options: [
+          { value: '64', label: '64 kbps' },
+          { value: '128', label: '128 kbps' },
+          { value: '192', label: '192 kbps' }
+        ],
+        description: 'MP3 比特率，仅在格式为 MP3 时有效，默认为 128'
+      }
+    ]
+  },
   coqui: {
     name: 'Coqui TTS',
     fields: [
