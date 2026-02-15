@@ -587,6 +587,7 @@ func (h *Handlers) RunWorkflowDefinition(c *gin.Context) {
 	// Parse initial parameters from request body (optional)
 	var input struct {
 		Parameters map[string]interface{} `json:"parameters"`
+		Detail     bool                   `json:"detail"`
 	}
 	// Parse request body (empty body is allowed for parameters)
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -682,10 +683,28 @@ func (h *Handlers) RunWorkflowDefinition(c *gin.Context) {
 		return
 	}
 
-	// Prepare response with logs
-	responseData := map[string]interface{}{
-		"instance": instance,
+	// Prepare response with simplified format
+	// Extract workflow_result from context data
+	var workflowResult interface{}
+	if runtimeWf.Context != nil && runtimeWf.Context.NodeData != nil {
+		if result, ok := runtimeWf.Context.NodeData["workflow_result"]; ok {
+			workflowResult = result
+		}
 	}
+
+	// Build response data - only include essential fields
+	responseData := map[string]interface{}{
+		"id":     instance.ID,
+		"status": instance.Status,
+		"result": workflowResult,
+	}
+
+	// Add detailed context data if requested
+	if input.Detail && runtimeWf.Context != nil {
+		responseData["context"] = runtimeWf.Context.NodeData
+	}
+
+	// Add logs if available
 	if runtimeWf.Context != nil && len(runtimeWf.Context.Logs) > 0 {
 		responseData["logs"] = runtimeWf.Context.Logs
 	}

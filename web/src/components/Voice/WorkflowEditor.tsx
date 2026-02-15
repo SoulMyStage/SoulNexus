@@ -1,5 +1,5 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { motion,  } from 'framer-motion'
+import React, { useState, useRef, useCallback, useEffect, Suspense } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Play,
   Square,
@@ -15,7 +15,8 @@ import {
   Trash2, 
   ChevronLeft,
   ChevronRight,
-  CheckCircle
+  CheckCircle,
+  Minimize2
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import Modal from '@/components/UI/Modal'
@@ -34,6 +35,9 @@ import {
   useWorkflowValidation 
 } from './hooks'
 import { NodeDrawer, CanvasToolbar, HelpModal, RunParametersModal, NodeConfigPanel } from './components'
+
+// 懒加载Monaco Editor
+const MonacoEditor = React.lazy(() => import('@monaco-editor/react'))
 
 // 图标映射
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
@@ -137,7 +141,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
   const [nodeTestParameters, setNodeTestParameters] = useState<Record<string, string>>({})
   const [nodeTestResult, setNodeTestResult] = useState<any>(null)
   const [isTestingNode, setIsTestingNode] = useState(false)
-  
+  const [isCodeEditorFullscreen, setIsCodeEditorFullscreen] = useState(false)
 
 
   // 使用 hooks 管理节点操作
@@ -1200,7 +1204,12 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
         onNodeConfigChange={(config: any) => {
           if (configuringNode) {
             setNodes(prev => prev.map(n => 
-              n.id === configuringNode ? { ...n, data: { ...n.data, config } } : n
+              n.id === configuringNode ? { 
+                ...n, 
+                data: { ...n.data, config },
+                inputs: config.inputs !== undefined ? config.inputs : n.inputs,
+                outputs: config.outputs !== undefined ? config.outputs : n.outputs,
+              } : n
             ))
           }
         }}
@@ -1208,6 +1217,8 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
         availableEventTypes={availableEventTypes}
         installedPlugins={installedPlugins}
         loadingPlugins={loadingPlugins}
+        isCodeEditorFullscreen={isCodeEditorFullscreen}
+        setIsCodeEditorFullscreen={setIsCodeEditorFullscreen}
       />
 
       {/* 运行参数模态框 */}
@@ -1431,6 +1442,99 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({
           onClose={() => setShowPublishModal(false)}
         />
       </Modal>
+
+      {/* 脚本全屏编辑器 */}
+      <AnimatePresence>
+        {isCodeEditorFullscreen && configuringNode && (() => {
+          const node = nodes.find(n => n.id === configuringNode)
+          return node && node.type === 'script' ? (
+            <>
+              {/* 背景遮罩 */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsCodeEditorFullscreen(false)}
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100]"
+              />
+              {/* 全屏编辑器 */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="fixed inset-4 z-[110] bg-slate-900 rounded-lg shadow-2xl flex flex-col overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* 标题栏 */}
+                <div className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6 flex-shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-blue-500/15">
+                      <Package className="w-5 h-5 text-blue-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-200">
+                        {node.data.label} - Go 脚本编辑器
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        全屏编辑模式
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsCodeEditorFullscreen(false)}
+                    className="flex items-center gap-2 text-slate-300 hover:text-white"
+                  >
+                    <Minimize2 className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                {/* 编辑器容器 */}
+                <div className="flex-1 overflow-hidden">
+                  <Suspense fallback={
+                    <div className="h-full flex items-center justify-center bg-slate-900">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-4 border-slate-700 border-t-blue-500 mx-auto mb-3"></div>
+                        <p className="text-sm text-slate-400">加载代码编辑器...</p>
+                      </div>
+                    </div>
+                  }>
+                    <MonacoEditor
+                      height="100%"
+                      language={node.data.config?.language || 'go'}
+                      value={node.data.config?.code || ''}
+                      onChange={(value) => {
+                        setNodes(prev => prev.map(n => 
+                          n.id === configuringNode ? { 
+                            ...n, 
+                            data: { ...n.data, config: { ...(n.data.config || {}), code: value || '' } }
+                          } : n
+                        ))
+                      }}
+                      theme="vs-dark"
+                      options={{
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        fontSize: 14,
+                        lineNumbers: 'on',
+                        wordWrap: 'on',
+                        automaticLayout: true,
+                        tabSize: 2,
+                        formatOnPaste: true,
+                        formatOnType: true,
+                        suggestOnTriggerCharacters: true,
+                        quickSuggestions: true,
+                      }}
+                    />
+                  </Suspense>
+                </div>
+              </motion.div>
+            </>
+          ) : null
+        })()}
+      </AnimatePresence>
     </div>
   )
 }

@@ -19,6 +19,8 @@ interface NodeConfigPanelProps {
   availableEventTypes: string[]
   installedPlugins: any[]
   loadingPlugins: boolean
+  isCodeEditorFullscreen?: boolean
+  setIsCodeEditorFullscreen?: (value: boolean) => void
 }
 
 /**
@@ -35,9 +37,13 @@ export const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({
   getIconComponent,
   availableEventTypes,
   installedPlugins,
-  loadingPlugins
+  loadingPlugins,
+  isCodeEditorFullscreen = false,
+  setIsCodeEditorFullscreen = () => {}
 }) => {
-  const [isCodeEditorFullscreen, setIsCodeEditorFullscreen] = React.useState(false)
+  const [internalIsCodeEditorFullscreen, setInternalIsCodeEditorFullscreen] = React.useState(false)
+  const fullscreenState = isCodeEditorFullscreen !== undefined ? isCodeEditorFullscreen : internalIsCodeEditorFullscreen
+  const setFullscreenState = setIsCodeEditorFullscreen !== undefined ? setIsCodeEditorFullscreen : setInternalIsCodeEditorFullscreen
   
   if (!isOpen || !node) return null
 
@@ -61,6 +67,7 @@ export const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({
           transition={{ type: 'spring', damping: 25, stiffness: 200 }}
           className="fixed top-0 right-0 bottom-0 w-96 bg-white dark:bg-gray-800 shadow-2xl z-50 flex flex-col"
         >
+
           {/* 抽屉头部 */}
           <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-900">
             <div className="flex items-center gap-3">
@@ -124,8 +131,8 @@ export const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({
                 availableEventTypes={availableEventTypes}
                 installedPlugins={installedPlugins}
                 loadingPlugins={loadingPlugins}
-                isCodeEditorFullscreen={isCodeEditorFullscreen}
-                setIsCodeEditorFullscreen={setIsCodeEditorFullscreen}
+                isCodeEditorFullscreen={fullscreenState}
+                setIsCodeEditorFullscreen={setFullscreenState}
               />
             </div>
           </div>
@@ -176,8 +183,150 @@ const NodeTypeConfig: React.FC<NodeTypeConfigProps> = ({
   isCodeEditorFullscreen,
   setIsCodeEditorFullscreen
 }) => {
+  const [newParam, setNewParam] = React.useState('')
+
   // 根据节点类型渲染不同的配置
   switch (node.type) {
+    case 'start':
+      return (
+        <div className="space-y-4">
+          <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+            <div className="text-xs text-green-800 dark:text-green-200">
+              <strong>开始节点：</strong>工作流的入口点。定义工作流需要接收的输入参数。
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                value={newParam}
+                onChange={(e) => setNewParam(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && newParam.trim()) {
+                    const inputs = node.inputs || []
+                    if (!inputs.includes(newParam.trim())) {
+                      onConfigChange({ inputs: [...inputs, newParam.trim()] })
+                      setNewParam('')
+                    }
+                  }
+                }}
+                placeholder="输入参数名称"
+                size="sm"
+                className="flex-1"
+              />
+              <Button
+                onClick={() => {
+                  if (newParam.trim()) {
+                    const inputs = node.inputs || []
+                    if (!inputs.includes(newParam.trim())) {
+                      onConfigChange({ inputs: [...inputs, newParam.trim()] })
+                      setNewParam('')
+                    }
+                  }
+                }}
+                variant="success"
+                size="sm"
+              >
+                添加
+              </Button>
+            </div>
+
+            {node.inputs && node.inputs.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-700 dark:text-gray-300">输入参数列表：</p>
+                <div className="space-y-1">
+                  {node.inputs.map((input, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded">
+                      <span className="text-sm text-gray-900 dark:text-white">{input}</span>
+                      <Button
+                        onClick={() => {
+                          const inputs = node.inputs.filter((_: string, i: number) => i !== idx)
+                          onConfigChange({ inputs })
+                        }}
+                        variant="destructive"
+                        size="xs"
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )
+
+    case 'end':
+      return (
+        <div className="space-y-4">
+          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <div className="text-xs text-blue-800 dark:text-blue-200">
+              <strong>结束节点：</strong>工作流的出口点。定义工作流的输出参数。
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                value={newParam}
+                onChange={(e) => setNewParam(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && newParam.trim()) {
+                    const outputs = node.outputs || []
+                    if (!outputs.includes(newParam.trim())) {
+                      onConfigChange({ outputs: [...outputs, newParam.trim()] })
+                      setNewParam('')
+                    }
+                  }
+                }}
+                placeholder="输入参数名称"
+                size="sm"
+                className="flex-1"
+              />
+              <Button
+                onClick={() => {
+                  if (newParam.trim()) {
+                    const outputs = node.outputs || []
+                    if (!outputs.includes(newParam.trim())) {
+                      onConfigChange({ outputs: [...outputs, newParam.trim()] })
+                      setNewParam('')
+                    }
+                  }
+                }}
+                variant="primary"
+                size="sm"
+              >
+                添加
+              </Button>
+            </div>
+
+            {node.outputs && node.outputs.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-700 dark:text-gray-300">输出参数列表：</p>
+                <div className="space-y-1">
+                  {node.outputs.map((output, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded">
+                      <span className="text-sm text-gray-900 dark:text-white">{output}</span>
+                      <Button
+                        onClick={() => {
+                          const outputs = node.outputs.filter((_: string, i: number) => i !== idx)
+                          onConfigChange({ outputs })
+                        }}
+                        variant="destructive"
+                        size="xs"
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )
+
     case 'event':
       return (
         <EventNodeConfig
