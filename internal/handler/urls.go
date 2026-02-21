@@ -189,6 +189,8 @@ func (h *Handlers) Register(engine *gin.Engine) {
 	// Register Business Module Routes
 	h.registerAuthRoutes(r)
 	h.registerNotificationRoutes(r)
+	h.registerEmailLogRoutes(r)
+	h.registerSendCloudWebhookRoutes(r)
 	h.registerGroupRoutes(r)
 	h.registerQuotaRoutes(r)
 	h.registerAlertRoutes(r)
@@ -891,5 +893,28 @@ func (h *Handlers) registerMCPMarketplaceRoutes(r *gin.RouterGroup) {
 		marketplace.GET("/my-installations", models.AuthRequired, marketplaceHandler.GetUserInstalledMCPs)
 		marketplace.PATCH("/installations/:id/config", models.AuthRequired, marketplaceHandler.UpdateInstallationConfig)
 		marketplace.POST("/:id/reviews", models.AuthRequired, marketplaceHandler.ReviewMCP)
+	}
+}
+
+// registerEmailLogRoutes Email Log Module
+func (h *Handlers) registerEmailLogRoutes(r *gin.RouterGroup) {
+	emailLog := r.Group("email-logs")
+	{
+		// Get email logs with pagination
+		emailLog.GET("", models.AuthRequired, h.handleGetEmailLogs)
+		// Get email log detail
+		emailLog.GET("/:id", models.AuthRequired, h.handleGetEmailLogDetail)
+		// Get email statistics
+		emailLog.GET("/stats/summary", models.AuthRequired, h.handleGetEmailStats)
+	}
+}
+
+// registerSendCloudWebhookRoutes SendCloud Webhook Module
+func (h *Handlers) registerSendCloudWebhookRoutes(r *gin.RouterGroup) {
+	webhook := r.Group("webhooks/sendcloud")
+	{
+		// SendCloud webhook endpoint (no auth required)
+		webhook.POST("", h.handleSendCloudWebhook)
+		webhook.POST("/batch", h.handleSendCloudWebhookBatch)
 	}
 }

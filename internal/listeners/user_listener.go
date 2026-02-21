@@ -179,13 +179,13 @@ func InitUserListeners() {
 
 // sendWelcomeEmail sends welcome email
 func sendWelcomeEmail(user *models.User, db *gorm.DB) {
-	if config.GlobalConfig.Services.Mail.Host == "" || config.GlobalConfig.Services.Mail.From == "" || config.GlobalConfig.Services.Mail.Username == "" {
+	if config.GlobalConfig.Services.Mail.APIUser == "" || config.GlobalConfig.Services.Mail.From == "" || config.GlobalConfig.Services.Mail.APIKey == "" {
 		logger.Warn("Mail configuration not set, skipping sending login notification")
 		return
 	}
 
 	if user.EmailNotifications {
-		mailer := notification.NewMailNotification(config.GlobalConfig.Services.Mail)
+		mailer := notification.NewMailNotificationWithDB(config.GlobalConfig.Services.Mail, db, user.ID)
 		err := mailer.SendWelcomeEmail(
 			user.Email,
 			user.DisplayName,
@@ -206,7 +206,7 @@ func sendEmailVerification(user *models.User, hash, clientIp, userAgent string, 
 		zap.String("email", user.Email),
 		zap.String("hash", hash))
 
-	if config.GlobalConfig.Services.Mail.Host == "" {
+	if config.GlobalConfig.Services.Mail.APIUser == "" {
 		logger.Warn("Mail configuration not set, skipping sending email verification")
 		return
 	}
@@ -223,9 +223,9 @@ func sendEmailVerification(user *models.User, hash, clientIp, userAgent string, 
 	logger.Info("Preparing to send email verification",
 		zap.String("email", user.Email),
 		zap.String("verifyUrl", verifyUrl),
-		zap.String("mailHost", config.GlobalConfig.Services.Mail.Host))
+		zap.String("mailAPIUser", config.GlobalConfig.Services.Mail.APIUser))
 
-	mailer := notification.NewMailNotification(config.GlobalConfig.Services.Mail)
+	mailer := notification.NewMailNotificationWithDB(config.GlobalConfig.Services.Mail, db, user.ID)
 	err := mailer.SendVerificationEmail(user.Email, user.DisplayName, verifyUrl)
 	if err != nil {
 		logger.Error("Failed to send email verification", zap.Error(err), zap.String("email", user.Email))
@@ -236,7 +236,7 @@ func sendEmailVerification(user *models.User, hash, clientIp, userAgent string, 
 
 // sendPasswordResetEmail sends password reset email
 func sendPasswordResetEmail(user *models.User, hash, clientIp, userAgent string, db *gorm.DB) {
-	if config.GlobalConfig.Services.Mail.Host == "" {
+	if config.GlobalConfig.Services.Mail.APIUser == "" {
 		logger.Warn("Mail configuration not set, skipping sending password reset email")
 		return
 	}
@@ -250,7 +250,7 @@ func sendPasswordResetEmail(user *models.User, hash, clientIp, userAgent string,
 	// Build password reset URL
 	resetUrl := siteURL + "/reset-password?token=" + hash
 
-	mailer := notification.NewMailNotification(config.GlobalConfig.Services.Mail)
+	mailer := notification.NewMailNotificationWithDB(config.GlobalConfig.Services.Mail, db, user.ID)
 	err := mailer.SendPasswordResetEmail(user.Email, user.DisplayName, resetUrl)
 	if err != nil {
 		logger.Error("Failed to send password reset email", zap.Error(err), zap.String("email", user.Email))
@@ -271,7 +271,7 @@ func logUserEvent(user *models.User, eventType, description string) {
 
 // sendNewDeviceLoginAlert sends new device login alert email
 func sendNewDeviceLoginAlert(user *models.User, deviceInfo map[string]interface{}, db *gorm.DB) {
-	if config.GlobalConfig.Services.Mail.Host == "" {
+	if config.GlobalConfig.Services.Mail.APIUser == "" {
 		logger.Warn("Mail configuration not set, skipping sending new device login alert")
 		return
 	}
@@ -301,7 +301,7 @@ func sendNewDeviceLoginAlert(user *models.User, deviceInfo map[string]interface{
 	changePasswordURL := siteURL + "/password" // Change password page
 
 	// Send the alert email
-	mailer := notification.NewMailNotification(config.GlobalConfig.Services.Mail)
+	mailer := notification.NewMailNotificationWithDB(config.GlobalConfig.Services.Mail, db, user.ID)
 	err := mailer.SendNewDeviceLoginAlert(
 		user.Email,
 		displayName,

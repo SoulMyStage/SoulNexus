@@ -1705,7 +1705,7 @@ func (h *Handlers) handleSendDeviceVerificationCode(c *gin.Context) {
 
 	// 发送邮件
 	go func() {
-		err := notification.NewMailNotification(config.GlobalConfig.Services.Mail).SendDeviceVerificationCode(user.Email, user.DisplayName, code, form.DeviceID)
+		err := notification.NewMailNotificationWithDB(config.GlobalConfig.Services.Mail, db, user.ID).SendDeviceVerificationCode(user.Email, user.DisplayName, code, form.DeviceID)
 		if err != nil {
 			logger.Error("Failed to send device verification email", zap.Error(err), zap.String("email", user.Email))
 		}
@@ -2152,7 +2152,9 @@ func (h *Handlers) handleSendEmailCode(context *gin.Context) {
 	text := utils.RandNumberText(6)
 	utils.GlobalCache.Add(req.Email, text)
 	go func() {
-		err := notification.NewMailNotification(config.GlobalConfig.Services.Mail).SendVerificationCode(req.Email, text)
+		// Use IP address for tracking since no user context
+		mailNotif := notification.NewMailNotificationWithIP(config.GlobalConfig.Services.Mail, h.db, req.ClientIp)
+		err := mailNotif.SendVerificationCode(req.Email, text)
 		if err != nil {
 			LingEcho.AbortWithJSONError(context, http.StatusBadRequest, err)
 			return

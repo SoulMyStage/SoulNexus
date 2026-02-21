@@ -263,7 +263,7 @@ func (s *TriggerService) sendNotifications(alert *models.Alert, rule *models.Ale
 
 // sendEmailNotification 发送邮件通知
 func (s *TriggerService) sendEmailNotification(alert *models.Alert, rule *models.AlertRule, user *models.User) error {
-	if !user.EmailNotifications || config.GlobalConfig.Services.Mail.Host == "" {
+	if !user.EmailNotifications || config.GlobalConfig.Services.Mail.APIKey == "" {
 		return fmt.Errorf("用户未启用邮件通知或邮件配置未设置")
 	}
 

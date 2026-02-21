@@ -29,11 +29,9 @@ func setAllEnvs(t *testing.T) {
 	t.Setenv("LOG_MAX_BACKUPS", "7")
 
 	// 邮件
-	t.Setenv("MAIL_HOST", "smtp.example.com")
-	t.Setenv("MAIL_USERNAME", "user@example.com")
-	t.Setenv("MAIL_PASSWORD", "pass")
-	t.Setenv("MAIL_PORT", "587")
-	t.Setenv("MAIL_FROM", "noreply@example.com")
+	t.Setenv("SENDCLOUD_API_USER", "LingEcho")
+	t.Setenv("SENDCLOUD_API_KEY", "14b6e48501c452407421917c943be0c3")
+	t.Setenv("SENDCLOUD_FROM_EMAIL", "19511899044@163.com")
 
 	// LLM
 	t.Setenv("LLM_API_KEY", "ak")
@@ -113,11 +111,9 @@ func TestLoad_WithExplicitAppEnv(t *testing.T) {
 	}
 
 	// 邮件
-	if GlobalConfig.Services.Mail.Host != "smtp.example.com" ||
-		GlobalConfig.Services.Mail.Username != "user@example.com" ||
-		GlobalConfig.Services.Mail.Password != "pass" ||
-		GlobalConfig.Services.Mail.Port != 587 ||
-		GlobalConfig.Services.Mail.From != "noreply@example.com" {
+	if GlobalConfig.Services.Mail.APIUser != "LingEcho" ||
+		GlobalConfig.Services.Mail.APIKey != "14b6e48501c452407421917c943be0c3" ||
+		GlobalConfig.Services.Mail.From != "19511899044@163.com" {
 		t.Fatalf("mail config mismatch: %+v", GlobalConfig.Services.Mail)
 	}
 

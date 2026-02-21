@@ -307,13 +307,7 @@ func Load() error {
 				BaseURL: getStringOrDefault("LLM_BASE_URL", "https://api.openai.com/v1"),
 				Model:   getStringOrDefault("LLM_MODEL", "gpt-3.5-turbo"),
 			},
-			Mail: notification.MailConfig{
-				Host:     getStringOrDefault("MAIL_HOST", ""),
-				Username: getStringOrDefault("MAIL_USERNAME", ""),
-				Password: getStringOrDefault("MAIL_PASSWORD", ""),
-				Port:     int64(getIntOrDefault("MAIL_PORT", 587)),
-				From:     getStringOrDefault("MAIL_FROM", ""),
-			},
+			Mail: loadMailConfig(),
 			KnowledgeBase: KnowledgeBaseConfig{
 				Enabled: getBoolOrDefault("KNOWLEDGE_BASE_ENABLED", false),
 				Bailian: BailianConfig{
@@ -681,4 +675,44 @@ func loadMiddlewareConfig() MiddlewareConfig {
 		EnableCircuitBreaker: getBoolOrDefault("ENABLE_CIRCUIT_BREAKER", defaultConfig.EnableCircuitBreaker),
 		EnableOperationLog:   getBoolOrDefault("ENABLE_OPERATION_LOG", defaultConfig.EnableOperationLog),
 	}
+}
+
+// loadMailConfig loads mail configuration from environment variables
+// Supports both SMTP (legacy MAIL_* vars) and SendCloud (SENDCLOUD_* vars)
+func loadMailConfig() notification.MailConfig {
+	provider := getStringOrDefault("MAIL_PROVIDER", "")
+
+	// Auto-detect provider based on available environment variables
+	if provider == "" {
+		// If SendCloud credentials are set, use SendCloud
+		if getStringOrDefault("SENDCLOUD_API_USER", "") != "" {
+			provider = "sendcloud"
+		} else if getStringOrDefault("MAIL_HOST", "") != "" {
+			// If MAIL_HOST is set, use SMTP
+			provider = "smtp"
+		} else {
+			// Default to SendCloud
+			provider = "sendcloud"
+		}
+	}
+
+	config := notification.MailConfig{
+		Provider: provider,
+	}
+
+	if provider == "smtp" {
+		// Load SMTP configuration (supports both MAIL_* and SMTP_* vars)
+		config.Host = getStringOrDefault("SMTP_HOST", getStringOrDefault("MAIL_HOST", ""))
+		config.Username = getStringOrDefault("SMTP_USERNAME", getStringOrDefault("MAIL_USERNAME", ""))
+		config.Password = getStringOrDefault("SMTP_PASSWORD", getStringOrDefault("MAIL_PASSWORD", ""))
+		config.Port = int64(getIntOrDefault("SMTP_PORT", getIntOrDefault("MAIL_PORT", 587)))
+		config.From = getStringOrDefault("MAIL_FROM_EMAIL", getStringOrDefault("MAIL_FROM", ""))
+	} else {
+		// Load SendCloud configuration
+		config.APIUser = getStringOrDefault("SENDCLOUD_API_USER", "")
+		config.APIKey = getStringOrDefault("SENDCLOUD_API_KEY", "")
+		config.From = getStringOrDefault("MAIL_FROM_EMAIL", getStringOrDefault("SENDCLOUD_FROM_EMAIL", ""))
+	}
+
+	return config
 }

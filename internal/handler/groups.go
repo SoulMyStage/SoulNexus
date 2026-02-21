@@ -539,7 +539,7 @@ func (h *Handlers) InviteUser(c *gin.Context) {
 
 	// 发送邮件通知（如果用户启用了邮件通知）
 	go func() {
-		if invitee.EmailNotifications && config.GlobalConfig.Services.Mail.Host != "" {
+		if invitee.EmailNotifications && config.GlobalConfig.Services.Mail.APIUser != "" {
 			mailer := notification.NewMailNotification(config.GlobalConfig.Services.Mail)
 
 			// 构建接受邀请的URL

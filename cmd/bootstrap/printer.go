@@ -49,14 +49,6 @@ func LogConfigInfo() {
 		zap.Int("log_max_backups", config.GlobalConfig.Log.MaxBackups),
 	)
 
-	logger.Info("mail config",
-		zap.String("mail_host", config.GlobalConfig.Services.Mail.Host),
-		zap.String("mail_username", config.GlobalConfig.Services.Mail.Username),
-		zap.String("mail_password", config.GlobalConfig.Services.Mail.Password),
-		zap.String("mail_from", config.GlobalConfig.Services.Mail.From),
-		zap.Int64("mail_port", config.GlobalConfig.Services.Mail.Port),
-	)
-
 	logger.Info("search config",
 		zap.Bool("search_enabled", config.GlobalConfig.Features.SearchEnabled),
 		zap.String("search_path", config.GlobalConfig.Features.SearchPath),

@@ -65,10 +65,8 @@ func (h *Handlers) SystemInit(c *gin.Context) {
 
 	// Check if email configuration is complete
 	mailConfig := config.GlobalConfig.Services.Mail
-	emailConfigured := mailConfig.Host != "" &&
-		mailConfig.Port > 0 &&
-		mailConfig.Username != "" &&
-		mailConfig.Password != "" &&
+	emailConfigured := mailConfig.APIUser != "" &&
+		mailConfig.APIKey != "" &&
 		mailConfig.From != ""
 
 	// Get voice clone configurations (from database first, then from .env)
