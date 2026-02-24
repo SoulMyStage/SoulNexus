@@ -66,8 +66,11 @@ func (h *Handlers) SystemInit(c *gin.Context) {
 	// Check if email configuration is complete
 	mailConfig := config.GlobalConfig.Services.Mail
 	emailConfigured := mailConfig.APIUser != "" &&
-		mailConfig.APIKey != "" &&
-		mailConfig.From != ""
+		mailConfig.APIKey != "" ||
+		mailConfig.From != "" ||
+		mailConfig.Host != "" ||
+		mailConfig.Port > 0 ||
+		mailConfig.Username != ""
 
 	// Get voice clone configurations (from database first, then from .env)
 	xunfeiConfig := h.getVoiceCloneConfig("xunfei")
